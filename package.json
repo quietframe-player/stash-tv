@@ -1,0 +1,11 @@
+{
+  "name": "stash-tv",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "bun test tests",
+    "build": "python3 -B scripts/build.py",
+    "test:integration": "python3 -B scripts/integration.py --apply"
+  }
+}

@@ -1,0 +1,61 @@
+name: Test and publish
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: latest
+      - run: bun test
+      - run: python3 scripts/build.py
+      - run: python3 -B -m unittest discover -s tests -p 'test_*.py'
+      - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
+        with:
+          path: dist
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chrome, webkit]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - run: npx --yes --package @playwright/cli@0.1.21 playwright-cli install-browser ${{ matrix.browser }} --with-deps
+      - run: python3 -B scripts/integration.py --apply --browser ${{ matrix.browser }}
+      - run: python3 -B scripts/integration.py --apply --suite plugin --browser ${{ matrix.browser }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: integration-${{ matrix.browser }}
+          include-hidden-files: true
+          path: |
+            .tmp/stash-tv-integration/*/results.json
+            .tmp/stash-tv-integration/*/stash.log
+            .tmp/stash-tv-integration/*/*.png
+            .tmp/stash-tv-integration/*/chrome.log
+            .tmp/stash-tv-integration/*/webkit.log
+  deploy:
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: [check, integration]
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4
+        id: deployment

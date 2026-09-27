@@ -1,0 +1,13 @@
+name: Stash TV
+description: A lightweight fullscreen player for TV remotes and desktop browsers.
+version: 0.1.0
+url: https://github.com/quietframe-player/stash-tv
+ui:
+  javascript:
+    - launcher.js
+  assets:
+    /: web
+settings:
+  enableDelete:
+    displayName: Enable permanent deletion of scenes and video files (no undo)
+    type: BOOLEAN
