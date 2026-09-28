@@ -98,6 +98,43 @@ footer {
   font-size: clamp(16px, calc(10px + 0.5vw), 30px);
   line-height: 1.4;
   text-align: center;
+  z-index: 2;
+}
+#preview-marker {
+  display: block;
+  padding: 0 10px 6px;
+  overflow-wrap: break-word;
+  max-height: 4.6em;
+  overflow: hidden;
+}
+#seek-markers {
+  position: absolute;
+  bottom: calc(50% + 6px);
+  height: 18px;
+  pointer-events: none;
+}
+.marker-range {
+  position: absolute;
+  bottom: 0;
+  height: 3px;
+  border-radius: 2px;
+  background: #ffffff60;
+}
+#seek-markers .marker-tick {
+  position: absolute;
+  bottom: 0;
+  width: 20px;
+  height: 18px;
+  padding: 0;
+  transform: translateX(-50%);
+  border-radius: 4px;
+}
+.marker-tick::after {
+  content: "";
+  width: 3px;
+  height: 8px;
+  border-radius: 1px;
+  background: #fffc;
 }
 #preview-frame {
   position: relative;

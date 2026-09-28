@@ -72,6 +72,30 @@ export function seekPosition(clientX, left, width, duration) {
   return Math.round(fraction * duration * 10) / 10;
 }
 
+export function sceneMarkers(markers, duration) {
+  if (!Number.isFinite(duration) || duration <= 0) return [];
+  return (markers || []).filter(function (marker) {
+    return Number.isFinite(marker.seconds) && marker.seconds >= 0 && marker.seconds < duration;
+  }).map(function (marker) {
+    const end = Number.isFinite(marker.end_seconds) && marker.end_seconds > marker.seconds
+      ? Math.min(marker.end_seconds, duration) : null;
+    return {
+      id: String(marker.id),
+      start: marker.seconds,
+      end: end,
+      label: (marker.title || "").trim() || (marker.primary_tag || {}).name || "Marker",
+    };
+  }).sort((a, b) => a.start - b.start);
+}
+
+export function markerLabelsAt(markers, seconds) {
+  return Array.from(new Set(markers.filter(function (marker) {
+    return marker.end === null
+      ? Math.abs(seconds - marker.start) < 0.05
+      : seconds >= marker.start && seconds < marker.end;
+  }).map(marker => marker.label)));
+}
+
 export function randomQueue(queue, random) {
   const current = queue.ids[queue.index];
   const choices = Array.from(new Set(queue.ids)).filter(function (id) {
@@ -226,6 +250,7 @@ async function boot() {
   const state = {
     queue: null,
     scene: null,
+    markers: [],
     sources: [],
     sourceIndex: 0,
     sourceURL: "",
@@ -423,6 +448,40 @@ async function boot() {
     seek.style.setProperty("--progress", percent + "%");
   }
 
+  function positionMarkers() {
+    const range = byId("seek");
+    const layer = byId("seek-markers");
+    layer.style.left = range.offsetLeft + 6 + "px";
+    layer.style.width = Math.max(0, range.clientWidth - 12) + "px";
+  }
+
+  function renderMarkers() {
+    const layer = byId("seek-markers");
+    layer.textContent = "";
+    layer.hidden = !state.markers.length;
+    const duration = Number(byId("seek").max);
+    state.markers.forEach(function (marker) {
+      if (marker.end !== null) {
+        const segment = document.createElement("span");
+        segment.className = "marker-range";
+        segment.style.left = marker.start / duration * 100 + "%";
+        segment.style.width = (marker.end - marker.start) / duration * 100 + "%";
+        layer.appendChild(segment);
+      }
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "marker-tick";
+      button.dataset.markerId = marker.id;
+      button.style.left = marker.start / duration * 100 + "%";
+      button.setAttribute("aria-label", marker.label + " · " + timeLabel(marker.start));
+      button.onpointerenter = button.onfocus = function () { showPreview(marker.start); };
+      button.onpointerleave = button.onblur = function () { hidePreview(); };
+      button.onclick = function () { seek(marker.start); };
+      layer.appendChild(button);
+    });
+    positionMarkers();
+  }
+
   function scheduleTimeline() {
     if (state.timelineFrame) return;
     state.timelineFrame = requestAnimationFrame(function update() {
@@ -541,13 +600,19 @@ async function boot() {
       const cue = scrub.time === null ? null : previewAt(scrub.cues, scrub.time);
       const box = byId("seek-preview");
       const exact = scrub.time !== null && scrub.exactTime === scrub.time;
-      if (!exact && (scrub.status !== "ready" || !cue)) {
+      const labels = scrub.time === null ? [] : markerLabelsAt(state.markers, scrub.time);
+      const label = byId("preview-marker");
+      label.textContent = labels.join(" · ");
+      label.hidden = !labels.length;
+      const hasFrame = exact || (scrub.status === "ready" && !!cue);
+      byId("preview-frame").hidden = !hasFrame;
+      if (!hasFrame && !labels.length) {
         box.hidden = true;
         return;
       }
       const canvas = byId("preview-exact");
-      const frameWidth = exact ? canvas.width : cue.width;
-      const frameHeight = exact ? canvas.height : cue.height;
+      const frameWidth = exact ? canvas.width : hasFrame ? cue.width : 280;
+      const frameHeight = exact ? canvas.height : hasFrame ? cue.height : 158;
       const range = byId("seek");
       const timeline = range.parentElement;
       const desiredWidth = Math.max(220, Math.min(560, 152 + player.clientWidth * 0.1));
@@ -572,12 +637,12 @@ async function boot() {
       const image = byId("preview-image");
       image.hidden = exact;
       canvas.hidden = !exact;
-      if (!exact) {
+      if (hasFrame && !exact) {
         if (image.src !== cue.url) image.src = cue.url;
         image.style.width = scrub.image.naturalWidth * scale + "px";
         image.style.transform = "translate3d(" + -cue.x * scale + "px," + -cue.y * scale + "px,0)";
       }
-      byId("preview-time").textContent = exact
+      byId("preview-time").textContent = exact || !hasFrame
         ? timeLabel(scrub.time)
         : "≈ " + timeLabel(cue.start);
       box.hidden = false;
@@ -602,7 +667,7 @@ async function boot() {
   function getScene(id) {
     if (cache.has(id)) return cache.get(id);
     const query =
-      "query TVScene($id:ID!){findScene(id:$id){id resume_time paths{stream vtt} sceneStreams{url mime_type label} files{duration}}}";
+      "query TVScene($id:ID!){findScene(id:$id){id resume_time paths{stream vtt} sceneStreams{url mime_type label} files{duration} scene_markers{id title seconds end_seconds primary_tag{name}}}}";
     const promise = api(query, { id: id })
       .then(function (data) {
         if (!data.findScene) throw new Error("This scene is no longer in Stash. Choose Next.");
@@ -666,6 +731,8 @@ async function boot() {
     clearTimeout(state.sourceTimer);
     video.pause();
     state.scene = null;
+    state.markers = [];
+    renderMarkers();
     state.sourceURL = "";
     state.counted = false;
     state.reported = false;
@@ -699,6 +766,8 @@ async function boot() {
       const file = scene.files[0] || {};
       byId("duration").textContent = timeLabel(file.duration);
       byId("seek").max = String(file.duration || 1);
+      state.markers = sceneMarkers(scene.scene_markers, Number(file.duration));
+      renderMarkers();
       setSource(0, state.fromBeginning ? 0 : Number(scene.resume_time) || 0);
       mark("ready");
       const next = advanceQueue(queue, 1);
@@ -825,6 +894,8 @@ async function boot() {
     resetPreview();
     clearTimeout(state.sourceTimer);
     state.scene = null;
+    state.markers = [];
+    renderMarkers();
     state.sourceURL = "";
     state.counted = false;
     state.playedAt = 0;
@@ -1063,6 +1134,7 @@ async function boot() {
   document.addEventListener("fullscreenchange", updateFullscreen);
   document.addEventListener("webkitfullscreenchange", updateFullscreen);
   window.addEventListener("resize", renderPreview);
+  window.addEventListener("resize", positionMarkers);
   document.addEventListener("keydown", function (event) {
     if (
       event.ctrlKey ||
@@ -1097,6 +1169,12 @@ async function boot() {
     if (event.target === byId("delete") && (event.key === " " || event.keyCode === 32)) {
       event.preventDefault();
       if (!event.repeat) deleteScene(event);
+      return;
+    }
+    if (event.target.classList.contains("marker-tick") &&
+        (event.key === " " || event.key === "Enter")) {
+      event.preventDefault();
+      if (!event.repeat) event.target.click();
       return;
     }
     const action = remoteAction(event);

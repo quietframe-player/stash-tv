@@ -54,6 +54,17 @@ Codec support depends on the browser and device. If a WebM transcode reports a
 premature end, the player recovers through an available MP4 stream at the same resolution. When playback fails, a quality selector appears.
 Resume positions follow Stash's **Always start from beginning** preference.
 
+## Scene markers
+
+Existing Stash scene markers appear as ticks above the seek bar. Markers with an end time
+also show a thin range. Hover or focus a tick to see its label; click it, or press Space/Enter
+while it is focused, to jump to its start. Seeking preserves whether the video is playing or paused.
+
+Frame previews show the labels of all marker ranges at the selected time. Start-only markers
+label that timestamp without implying an end time. Labels still work when sprites are missing.
+Videos without markers keep the normal seek bar. Add or edit markers in Stash; the player reads
+their titles and primary tags, and does not analyze or automatically label videos.
+
 ## Optional permanent deletion
 
 Deletion is disabled by default. Enable **Settings → Plugins → Stash TV → Enable permanent deletion**

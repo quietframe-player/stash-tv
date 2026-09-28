@@ -8,11 +8,45 @@ import {
   removeCurrentScene,
   remoteAction,
   seekPosition,
+  sceneMarkers,
+  markerLabelsAt,
   sourceAt,
   truncatedWebmFallback,
   streamChoices,
   timeLabel,
 } from "../plugins/stash-tv/web/player.js";
+
+test("markers preserve points, bounded overlaps, tag labels, and fractional boundaries", () => {
+  const markers = sceneMarkers([
+    { id: "2", seconds: 10.5, end_seconds: 25, title: "Dialogue" },
+    { id: "1", seconds: 4, end_seconds: null, title: "", primary_tag: { name: "Chapter" } },
+    { id: "3", seconds: 20, end_seconds: 90, title: "Close-up" },
+    { id: "4", seconds: 21, end_seconds: 23, title: "Dialogue" },
+  ], 50);
+  expect(markers.map(m => m.id)).toEqual(["1", "2", "3", "4"]);
+  expect(markers[0]).toMatchObject({ start: 4, end: null, label: "Chapter" });
+  expect(markers[2].end).toBe(50);
+  expect(markerLabelsAt(markers, 4)).toEqual(["Chapter"]);
+  expect(markerLabelsAt(markers, 5)).toEqual([]);
+  expect(markerLabelsAt(markers, 10.5)).toEqual(["Dialogue"]);
+  expect(markerLabelsAt(markers, 22)).toEqual(["Dialogue", "Close-up"]);
+  expect(markerLabelsAt(markers, 25)).toEqual(["Close-up"]);
+  expect(markerLabelsAt(markers, 50)).toEqual([]);
+});
+
+test("invalid marker timing cannot extend a point or escape the scene", () => {
+  const markers = sceneMarkers([
+    { id: 1, seconds: -1 }, { id: 2, seconds: NaN }, { id: 3, seconds: 50 },
+    { id: 4, seconds: 5, end_seconds: 3, title: "  " },
+    { id: 5, seconds: 6, end_seconds: Infinity, title: "<b>Literal label</b>" },
+  ], 50);
+  expect(markers).toEqual([
+    { id: "4", start: 5, end: null, label: "Marker" },
+    { id: "5", start: 6, end: null, label: "<b>Literal label</b>" },
+  ]);
+  expect(sceneMarkers([], 50)).toEqual([]);
+  expect(sceneMarkers(null, 0)).toEqual([]);
+});
 
 test("Stash VTT selects sprite frames at cue boundaries and at the end", () => {
   const cues = previewCues(
