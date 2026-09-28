@@ -19,6 +19,9 @@ export default async function verifyPlayer(page, options) {
     data.findScenes.scenes.length === 1 && scene.files[0].path === "/media/sintel.mp4",
     "Expected the isolated Sintel library",
   );
+  const oldMarkers = await api('query($id:ID!){findScene(id:$id){scene_markers{id}}}', { id: scene.id });
+  for (const marker of oldMarkers.findScene.scene_markers)
+    await api('mutation($id:ID!){sceneMarkerDestroy(id:$id)}', { id: marker.id });
   const vtt = await page.request.get(scene.paths.vtt);
   assert(vtt.ok() && (await vtt.text()).includes("WEBVTT"), "Stash did not generate the fixture sprite VTT");
   await api("mutation($id:ID!){sceneSaveActivity(id:$id,resume_time:0,playDuration:0)}", {
@@ -119,6 +122,78 @@ export default async function verifyPlayer(page, options) {
     await ready();
     assert(await page.locator("#delete").isHidden(), "Deletion must be disabled by default");
     results.push({ name: "permanent deletion disabled by default", passed: true });
+    assert(await page.locator('#seek-markers').isHidden(), 'Unmarked scene shows marker controls');
+    const tag = await api('mutation($input:TagCreateInput!){tagCreate(input:$input){id}}', {
+      input: { name: 'Marker fixture ' + options.browser },
+    });
+    const markerIds = [];
+    for (const marker of [
+      { title: '<b>Chapter cue</b>', seconds: 6 },
+      { title: 'Dialogue', seconds: 14, end_seconds: 24 },
+      { title: 'Close-up', seconds: 20, end_seconds: 30 },
+    ]) {
+      const added = await api('mutation($input:SceneMarkerCreateInput!){sceneMarkerCreate(input:$input){id}}', {
+        input: { ...marker, scene_id: scene.id, primary_tag_id: tag.tagCreate.id },
+      });
+      markerIds.push(added.sceneMarkerCreate.id);
+    }
+    await page.reload();
+    await ready();
+    assert(await page.locator('.marker-tick').count() === 3, 'Real Stash markers missing');
+    assert(await page.locator('.marker-range').count() === 2, 'Start-only marker became a range');
+    const markerButton = (index) => page.locator('[data-marker-id="' + markerIds[index] + '"]');
+    const hoverTime = async (seconds, expected) => {
+      const p = await point(seconds);
+      await page.mouse.move(p.x, p.y);
+      await page.waitForFunction(text => document.getElementById('preview-marker').textContent === text, expected);
+    };
+    await hoverTime(22, 'Dialogue · Close-up');
+    assert((await sample()).paused && (await sample()).time < 1, 'Preview hover changed playback');
+    await hoverTime(8, '');
+    assert(await page.locator('#preview-marker').isHidden(), 'Point marker implied a duration');
+    await markerButton(0).hover();
+    await page.waitForFunction(() => document.getElementById('preview-marker').textContent === '<b>Chapter cue</b>');
+    assert(await page.locator('#preview-marker b').count() === 0, 'Marker title was parsed as HTML');
+    await markerButton(0).click();
+    await ready();
+    await page.waitForTimeout(2000);
+    assert((await sample()).paused && Math.abs((await sample()).time - 6) < 0.5, 'Point marker click lost paused state');
+    await markerButton(1).focus();
+    await page.keyboard.press('Enter');
+    await ready();
+    assert((await sample()).paused && Math.abs((await sample()).time - 14) < 0.5, 'Focused marker did not seek');
+    assert(!await page.evaluate(() => !!document.fullscreenElement), 'Marker Enter entered fullscreen');
+    await page.locator('#surface').click({ position: { x: 300, y: 200 } });
+    await markerButton(2).click();
+    await ready();
+    await continues('marker click preserves playing state', 6000);
+    await page.locator('#surface').click({ position: { x: 300, y: 200 } });
+    await seek(16);
+    await hoverTime(22, 'Dialogue · Close-up');
+    await page.screenshot({ path: options.reportDir + '/' + options.browser + '-markers.png' });
+    results.push({ name: 'real marker ranges, overlaps, point labels, safe text and keyboard activation', passed: true });
+    for (const width of [640, 1920, 1280]) {
+      await page.setViewportSize({ width, height: 720 });
+      await page.waitForTimeout(100);
+      const rail = await page.locator('#seek').boundingBox();
+      const tick = await markerButton(1).boundingBox();
+      const expected = rail.x + 6 + (rail.width - 12) * 14 / scene.files[0].duration;
+      assert(Math.abs(tick.x + tick.width / 2 - expected) < 1, 'Marker drifted on resize');
+    }
+    results.push({ name: 'marker alignment across viewport sizes', passed: true });
+
+    await page.route(scene.paths.vtt, route => route.abort());
+    await page.reload();
+    await ready();
+    await hoverTime(18, 'Dialogue');
+    await page.waitForTimeout(300);
+    assert(await page.locator('#seek-preview').isVisible() && await page.locator('#preview-frame').isHidden(),
+      'Missing sprites hid marker labels');
+    await page.unroute(scene.paths.vtt);
+    await page.reload();
+    await ready();
+    results.push({ name: 'marker labels without sprite images', passed: true });
+    await seek(0);
     await page.locator("#surface").click({ position: { x: 300, y: 200 } });
     await continues("unmuted original playback", 8000);
     const volume = () =>
@@ -278,6 +353,18 @@ export default async function verifyPlayer(page, options) {
       if ((await sample()).paused)
         await page.locator("#surface").click({ position: { x: 300, y: 200 } });
       await continues(label + " selection and playback", 4000);
+      await page.mouse.move(200, 100);
+      await markerButton(1).click();
+      await ready();
+      assert(Math.abs((await sample()).time - 14) < 1.5, 'Converted marker seek lost absolute timestamp');
+      await continues(label + ' marker seek', 4000);
+      await page.locator('#surface').click({ position: { x: 300, y: 200 } });
+      await markerButton(2).click();
+      await ready();
+      await page.waitForTimeout(2000);
+      assert((await sample()).paused && Math.abs((await sample()).time - 20) < 0.5,
+        'Converted marker seek resumed paused playback');
+      await page.locator('#surface').click({ position: { x: 300, y: 200 } });
       for (const key of ["d", "a"]) {
         await seek(20);
         await page.keyboard.press(key);
@@ -316,6 +403,13 @@ export default async function verifyPlayer(page, options) {
       await ready();
     }
     assert(errors.length === 0, "Browser errors: " + JSON.stringify(errors));
+    for (const id of markerIds)
+      await api('mutation($id:ID!){sceneMarkerDestroy(id:$id)}', { id });
+    await page.reload();
+    await ready();
+    assert(await page.locator('#seek-markers').isHidden() && await page.locator('.marker-tick').count() === 0,
+      'Removed markers remain on the timeline');
+    results.push({ name: 'removed markers disappear after reload', passed: true });
     await page.screenshot({ path: options.reportDir + "/" + options.browser + ".png" });
     return {
       passed: true,

@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="referrer" content="same-origin" />
     <title>Stash TV</title>
-    <link rel="stylesheet" href="./style.css?v=0.1.0" />
-    <script type="module" src="./player.js?v=0.1.0"></script>
+    <link rel="stylesheet" href="./style.css?v=0.2.0" />
+    <script type="module" src="./player.js?v=0.2.0"></script>
   </head>
   <body>
     <main id="player" tabindex="-1" aria-label="Stash TV player" data-phase="loading">
@@ -20,9 +20,11 @@
               <canvas id="preview-exact" hidden></canvas>
             </div>
             <span id="preview-time"></span>
+            <span id="preview-marker" hidden></span>
           </div>
           <span id="elapsed">0:00</span>
           <input id="seek" type="range" min="0" max="1" value="0" step="0.1" aria-label="Seek" />
+          <div id="seek-markers" role="group" aria-label="Scene markers" hidden></div>
           <span id="duration">0:00</span>
         </div>
         <!-- Lucide SVGs, ISC license. See LUCIDE-LICENSE.txt and the README. -->
