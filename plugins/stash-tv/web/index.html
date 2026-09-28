@@ -2,16 +2,17 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="referrer" content="same-origin" />
     <title>Stash TV</title>
-    <link rel="stylesheet" href="./style.css?v=0.2.0" />
-    <script type="module" src="./player.js?v=0.2.0"></script>
+    <link rel="stylesheet" href="./style.css?v=0.3.0" />
+    <script type="module" src="./player.js?v=0.3.0"></script>
   </head>
   <body>
     <main id="player" tabindex="-1" aria-label="Stash TV player" data-phase="loading">
       <video id="video" playsinline preload="metadata"></video>
       <button id="surface" type="button" aria-label="Play video"></button>
+      <span id="gesture-feedback" hidden aria-live="polite">2×</span>
       <footer class="chrome">
         <div class="timeline">
           <div id="seek-preview" hidden aria-hidden="true">

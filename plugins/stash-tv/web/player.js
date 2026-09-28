@@ -381,7 +381,7 @@ async function boot() {
   }
 
   function fullscreen() {
-    return document.fullscreenElement || document.webkitFullscreenElement;
+    return document.fullscreenElement || document.webkitFullscreenElement || video.webkitDisplayingFullscreen;
   }
 
   function updateFullscreen() {
@@ -396,12 +396,21 @@ async function boot() {
   function enterFullscreen() {
     if (fullscreen()) return;
     const request = player.requestFullscreen || player.webkitRequestFullscreen;
-    if (!request) return;
-    const result = request.call(player);
-    if (result && result.catch)
-      result.catch(function () {
-        byId("notice").textContent = "Press Fullscreen to enter fullscreen.";
-      });
+    function nativeFullscreen() {
+      try {
+        if (!video.webkitEnterFullscreen) throw new Error("Fullscreen unavailable");
+        video.webkitEnterFullscreen();
+      } catch {
+        byId("notice").textContent = "Fullscreen is unavailable in this browser.";
+      }
+    }
+    byId("notice").textContent = "";
+    if (!request || (document.fullscreenEnabled === false && document.webkitFullscreenEnabled !== true))
+      return nativeFullscreen();
+    try {
+      const result = request.call(player);
+      if (result && result.catch) result.catch(nativeFullscreen);
+    } catch { nativeFullscreen(); }
   }
 
   function currentTime() {
@@ -451,6 +460,8 @@ async function boot() {
   function positionMarkers() {
     const range = byId("seek");
     const layer = byId("seek-markers");
+    layer.style.top = range.offsetTop + range.clientHeight / 2 - 24 + "px";
+    layer.style.bottom = "auto";
     layer.style.left = range.offsetLeft + 6 + "px";
     layer.style.width = Math.max(0, range.clientWidth - 12) + "px";
   }
@@ -724,6 +735,7 @@ async function boot() {
   }
 
   async function loadScene() {
+    cancelTouch();
     saveProgress();
     const generation = ++state.generation;
     resetPreview();
@@ -888,6 +900,7 @@ async function boot() {
 
   async function deleteScene(event) {
     if (byId("delete").disabled || event.detail > 1) return;
+    cancelTouch();
     const id = state.scene.id;
     const queue = state.queue;
     ++state.generation;
@@ -957,8 +970,117 @@ async function boot() {
     }
   }
 
+  const surface = byId("surface");
+  let touch = null;
+  let tap = null;
+  let touchClickUntil = 0;
+
+  function cancelTap() {
+    if (tap) clearTimeout(tap.timer);
+    tap = null;
+  }
+
+  function cancelTouch() {
+    if (touch) {
+      clearTimeout(touch.timer);
+      if (touch.phase === "holding") video.playbackRate = touch.rate;
+      touch = null;
+    }
+    byId("gesture-feedback").hidden = true;
+    cancelTap();
+  }
+
+  surface.addEventListener("pointerdown", function (event) {
+    if (event.pointerType !== "touch") return;
+    touchClickUntil = performance.now() + 1000;
+    if (surface.disabled || !event.isPrimary || touch) {
+      cancelTouch();
+      return;
+    }
+    event.preventDefault();
+    surface.setPointerCapture(event.pointerId);
+    touch = {
+      id: event.pointerId, x: event.clientX, y: event.clientY,
+      phase: "pending", rate: video.playbackRate, timer: 0,
+    };
+    touch.timer = setTimeout(function () {
+      if (!touch || touch.phase !== "pending" || video.paused) return;
+      cancelTap();
+      touch.phase = "holding";
+      video.playbackRate = 2;
+      byId("gesture-feedback").hidden = false;
+    }, 500);
+  });
+  surface.addEventListener("pointermove", function (event) {
+    if (!touch || touch.id !== event.pointerId) return;
+    const dx = event.clientX - touch.x;
+    const dy = event.clientY - touch.y;
+    if (Math.hypot(dx, dy) <= 12 || touch.phase !== "pending") return;
+    clearTimeout(touch.timer);
+    cancelTap();
+    touch.phase = "moving";
+  });
+  surface.addEventListener("pointerup", function (event) {
+    if (!touch || touch.id !== event.pointerId) return;
+    event.preventDefault();
+    touchClickUntil = performance.now() + 1000;
+    const ended = touch;
+    clearTimeout(ended.timer);
+    touch = null;
+    if (ended.phase === "holding") {
+      video.playbackRate = ended.rate;
+      byId("gesture-feedback").hidden = true;
+      return;
+    }
+    const dx = event.clientX - ended.x;
+    const dy = event.clientY - ended.y;
+    if (ended.phase === "moving" || Math.hypot(dx, dy) > 12) {
+      cancelTap();
+      if (Math.abs(dy) >= 64 && Math.abs(dy) > Math.abs(dx) * 1.5)
+        navigate(dy < 0 ? 1 : -1);
+      return;
+    }
+    const bounds = surface.getBoundingClientRect();
+    const fraction = (ended.x - bounds.left) / bounds.width;
+    const side = fraction < 0.35 ? -1 : fraction > 0.65 ? 1 : 0;
+    const now = performance.now();
+    if (tap && now - tap.time < 300 && side && tap.side === side) {
+      const started = tap.started;
+      cancelTap();
+      if (started) { state.wantsPlay = false; video.pause(); }
+      queueSeek(side * 10);
+      return;
+    }
+    if (tap) {
+      const pending = tap;
+      cancelTap();
+      if (!pending.started) toggle();
+    }
+    // iOS requires play() during the touch event, before a double-tap timer expires.
+    const started = video.paused;
+    if (started) toggle();
+    tap = { time: now, side: side, started: started, timer: setTimeout(function () {
+      const pending = tap;
+      tap = null;
+      if (pending && !pending.started) toggle();
+    }, 300) };
+  });
+  surface.addEventListener("pointercancel", cancelTouch);
+  surface.addEventListener("lostpointercapture", function () {
+    if (touch) cancelTouch();
+  });
+  surface.addEventListener("contextmenu", function (event) {
+    if (touch || performance.now() < touchClickUntil) event.preventDefault();
+  });
+  window.addEventListener("blur", cancelTouch);
+  window.addEventListener("pagehide", cancelTouch);
+  document.addEventListener("visibilitychange", function () {
+    if (document.hidden) cancelTouch();
+  });
+
   byId("toggle").onclick = toggle;
-  byId("surface").onclick = function () {
+  byId("surface").onclick = function (event) {
+    if (event.detail !== 0 && performance.now() < touchClickUntil) return;
     mark("click_toggle");
     toggle();
   };
@@ -1022,7 +1144,8 @@ async function boot() {
   byId("fullscreen").onclick = function () {
     if (fullscreen()) {
       const exit = document.exitFullscreen || document.webkitExitFullscreen;
-      if (exit) exit.call(document);
+      if (video.webkitDisplayingFullscreen && video.webkitExitFullscreen) video.webkitExitFullscreen();
+      else if (exit) exit.call(document);
     } else enterFullscreen();
   };
   function recoverTruncatedStream() {
@@ -1090,6 +1213,7 @@ async function boot() {
     showControls();
   });
   video.addEventListener("pause", function () {
+    if (touch && touch.phase === "holding") cancelTouch();
     if (state.phase !== "playing") return;
     saveProgress();
     phase("paused", "Paused");
@@ -1121,7 +1245,10 @@ async function boot() {
     }
   });
   player.addEventListener("mousemove", showControls);
-  player.addEventListener("pointerdown", showControls);
+  player.addEventListener("pointerdown", function (event) {
+    if (event.target !== surface || (event.pointerType === "touch" && !event.isPrimary)) cancelTouch();
+    showControls();
+  });
   player.addEventListener("click", function (event) {
     if (event.target === player || event.target === video) {
       mark("click_toggle");
@@ -1129,8 +1256,11 @@ async function boot() {
     }
   });
   player.addEventListener("dblclick", function (event) {
-    if (event.target === video || event.target === byId("surface")) enterFullscreen();
+    if (performance.now() >= touchClickUntil &&
+        (event.target === video || event.target === byId("surface"))) enterFullscreen();
   });
+  video.addEventListener("webkitbeginfullscreen", updateFullscreen);
+  video.addEventListener("webkitendfullscreen", updateFullscreen);
   document.addEventListener("fullscreenchange", updateFullscreen);
   document.addEventListener("webkitfullscreenchange", updateFullscreen);
   window.addEventListener("resize", renderPreview);
