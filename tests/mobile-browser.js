@@ -115,8 +115,17 @@ export default async function verifyMobile(page, options) {
     await touch('down',100,350); await touch('move',250,355); await touch('up',250,355);
     check((await sample()).scene===before.scene,'Horizontal drag changed scene');
     await page.waitForFunction(() => !document.querySelector('#video').paused && !document.querySelector('#video').seeking && !document.querySelector('#toggle').disabled && document.querySelector('#player').dataset.buffering === 'false');
-    await page.locator('#toggle').tap(); await page.waitForTimeout(400);
-    check((await sample()).paused, 'Control tap did not pause: '+JSON.stringify(await sample()));
+    await page.evaluate(() => {
+      window.controlEvents=[];
+      for (const type of ['pointerdown','pointerup','click']) document.querySelector('#toggle').addEventListener(type, e => window.controlEvents.push({type, target:e.target.id, disabled:e.currentTarget.disabled}));
+    });
+    if (cdp) {
+      const box = await page.locator('#toggle').boundingBox();
+      await touch('down',box.x+box.width/2,box.y+box.height/2);
+      await touch('up',box.x+box.width/2,box.y+box.height/2);
+    } else await page.locator('#toggle').tap();
+    await page.waitForTimeout(400);
+    check((await sample()).paused, 'Control tap did not pause: '+JSON.stringify({sample:await sample(),events:await page.evaluate(()=>window.controlEvents)}));
     results.push({name:'horizontal drag and playback controls do not navigate',passed:true});
     check(await page.locator('#volume-panel').isHidden(), 'Volume panel is not collapsed');
     await page.locator('#mute').tap();
