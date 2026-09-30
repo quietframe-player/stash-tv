@@ -1,4 +1,5 @@
 import hashlib
+from html.parser import HTMLParser
 from pathlib import Path
 import subprocess
 import unittest
@@ -8,6 +9,19 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class PackageTests(unittest.TestCase):
+    def test_published_landing_has_all_resources(self):
+        subprocess.run(['python3', 'scripts/build.py'], cwd=ROOT, check=True, capture_output=True)
+        html = (ROOT / 'dist/index.html').read_text()
+        self.assertNotIn('{{', html)
+
+        class Links(HTMLParser):
+            def handle_starttag(parser, tag, attributes):
+                for name, value in attributes:
+                    if name in ['src', 'href'] and value and not value.startswith(('https:', '#')):
+                        self.assertTrue((ROOT / 'dist' / value).is_file(), f'Missing published resource: {value}')
+
+        Links().feed(html)
+
     def test_reproducible_installable_package(self):
         subprocess.run(['python3', 'scripts/build.py'], cwd=ROOT, check=True, capture_output=True)
         first = (ROOT / 'dist/stash-tv.zip').read_bytes()
