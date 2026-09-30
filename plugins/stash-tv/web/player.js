@@ -1079,6 +1079,33 @@ async function boot() {
     if (document.hidden) cancelTouch();
   });
 
+  // Handle touch controls directly; a preceding drag can suppress compatibility clicks.
+  let controlTouch = null;
+  let controlClickUntil = 0;
+  const controls = player.querySelector("nav");
+  controls.addEventListener("pointerdown", function (event) {
+    const button = event.target.closest("button");
+    if (event.pointerType === "touch" && event.isPrimary && button && !button.disabled)
+      controlTouch = { button: button, id: event.pointerId, x: event.clientX, y: event.clientY };
+  });
+  controls.addEventListener("pointerup", function (event) {
+    const contact = controlTouch;
+    controlTouch = null;
+    if (!contact || contact.id !== event.pointerId ||
+        event.target.closest("button") !== contact.button ||
+        Math.hypot(event.clientX - contact.x, event.clientY - contact.y) > 12) return;
+    event.preventDefault();
+    controlClickUntil = performance.now() + 700;
+    contact.button.click();
+  });
+  controls.addEventListener("pointercancel", function () { controlTouch = null; });
+  controls.addEventListener("click", function (event) {
+    if (event.detail !== 0 && performance.now() < controlClickUntil) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    }
+  }, true);
+
   byId("toggle").onclick = toggle;
   byId("surface").onclick = function (event) {
     if (event.detail !== 0 && performance.now() < touchClickUntil) return;
