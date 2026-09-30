@@ -95,9 +95,16 @@ export default async function verifyPlayer(page, options) {
     );
   };
   const continues = async (name, milliseconds = 6000) => {
-    const before = await sample();
+    let before = await sample();
     await page.waitForTimeout(milliseconds);
-    const after = await sample();
+    let after = await sample();
+    if (after.source !== before.source && after.phase === "loading") {
+      await page.waitForFunction(() => document.getElementById("player").dataset.phase === "playing" &&
+        !document.getElementById("video").paused, null, { timeout: 15000 });
+      before = await sample();
+      await page.waitForTimeout(milliseconds);
+      after = await sample();
+    }
     assert(
       !after.paused &&
         !after.ended &&
