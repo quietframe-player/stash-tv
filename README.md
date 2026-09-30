@@ -62,6 +62,17 @@ backward or forward 10 seconds. Press and hold during playback for 2× speed; re
 to restore the previous speed. Swipe up for the next video or down for the previous one.
 Gestures stay on the video area, separate from the seek bar and playback controls.
 
+Double taps show a directional ripple and the number of seconds skipped. Each extra
+tap on the same side adds another 10 seconds. Hold-to-2× activates after 200 ms and
+changes speed on the current stream. Drag the seek bar in either direction, then
+release to seek; cancellation keeps the current playback position.
+
+During a vertical swipe, the video follows your finger. On release, its last decoded
+frame stays visible until the next scene is ready at its saved position, then both
+slide in the swipe direction. A short or cancelled drag returns to the current video.
+The player still uses one video decoder. Reduced-motion settings disable the slide
+and ripple animation while keeping the same gestures.
+
 Portrait mode gives the seek bar a full row and keeps icons at their regular size.
 Volume stays behind its speaker button on desktop and mobile.
 Fullscreen uses the browser API when available and the native video player on iPhones

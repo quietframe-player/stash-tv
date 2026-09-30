@@ -2,6 +2,7 @@
 """Build a deterministic ZIP and a native Stash package index."""
 import hashlib
 import json
+from datetime import date
 from pathlib import Path
 import shutil
 import zipfile
@@ -13,6 +14,7 @@ PLUGIN = ROOT / "plugins" / "stash-tv"
 def build():
     metadata = json.loads((ROOT / "package.json").read_text())
     version = metadata["version"]
+    release_date = date.fromisoformat(metadata["releaseDate"])
     manifest = (PLUGIN / "stash-tv.yml").read_text()
     if f"version: {version}\n" not in manifest:
         raise RuntimeError("package.json and stash-tv.yml versions differ")
@@ -36,7 +38,7 @@ def build():
     digest = hashlib.sha256(archive.read_bytes()).hexdigest()
     index = (f"- id: stash-tv\n  name: Stash TV\n  metadata:\n"
              f"    description: Lightweight fullscreen player for TV remotes, phones, and desktop browsers.\n"
-             f"  version: {version}\n  date: 2026-09-28 00:00:00\n"
+             f"  version: {version}\n  date: {release_date} 00:00:00\n"
              f"  path: stash-tv.zip\n  sha256: {digest}\n")
     (output / "index.yml").write_text(index)
     (output / ".nojekyll").touch()

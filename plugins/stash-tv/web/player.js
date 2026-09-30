@@ -244,6 +244,7 @@ async function boot() {
     controller: null,
     time: null,
     dragging: false,
+    pointerId: null,
     frame: 0,
     hideTimer: 0,
   };
@@ -274,6 +275,9 @@ async function boot() {
     seekTimer: 0,
   };
   let activity = Promise.resolve();
+  const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
+  const swipe = { phase: "idle", direction: 0, origin: 0, offset: 0, backdropOffset: 0, height: 0, timer: 0, frame: 0 };
+  const seekFeedback = { side: 0, seconds: 0, until: 0, timer: 0, pulseTimer: 0 };
 
   async function api(query, variables, keepalive, timeout) {
     const controller = new AbortController();
@@ -328,6 +332,7 @@ async function boot() {
   }
 
   function phase(value, message) {
+    if (value === "error") resetSwipe();
     state.phase = value;
     player.dataset.phase = value;
     byId("quality-controls").hidden = value !== "error";
@@ -536,7 +541,7 @@ async function boot() {
     if (scrub.image) scrub.image.src = "";
     cancelAnimationFrame(scrub.frame);
     scrub.frame = 0;
-    scrub.dragging = false;
+    finishScrub(false);
     scrub.cues = [];
     scrub.image = null;
     scrub.status = "idle";
@@ -735,8 +740,9 @@ async function boot() {
     }, 20000);
   }
 
-  async function loadScene() {
+  async function loadScene(transition) {
     cancelTouch();
+    if (!transition) resetSwipe();
     saveProgress();
     const generation = ++state.generation;
     resetPreview();
@@ -824,18 +830,20 @@ async function boot() {
     }
   }
 
-  function navigate(direction) {
+  function navigate(direction, transition) {
     if (!state.queue || byId("random").disabled) return;
     const queue = advanceQueue(state.queue, direction);
     if (!queue) {
+      returnSwipe();
       byId("notice").textContent =
         direction > 0 ? "End of queue. Press R or Green for another random video." : "First scene in queue.";
       showControls();
       return;
     }
+    if (transition) commitSwipe(direction);
     state.queue = queue;
     state.wantsPlay = true;
-    loadScene();
+    loadScene(transition);
   }
 
   function random() {
@@ -864,14 +872,16 @@ async function boot() {
     showControls();
   }
 
-  function seek(seconds) {
+  function seek(seconds, preview) {
     clearTimeout(state.seekTimer);
     state.seekTarget = null;
     if (byId("seek").disabled || !state.scene || !state.sources.length) return;
     const duration = Number((state.scene.files[0] || {}).duration) || 0;
     const target = Math.max(0, Math.min(seconds, duration));
-    showPreview(target);
-    scrub.hideTimer = setTimeout(hidePreview, 1500);
+    if (preview !== false) {
+      showPreview(target);
+      scrub.hideTimer = setTimeout(hidePreview, 1500);
+    } else hidePreview();
     if (state.sources[state.sourceIndex].offset) {
       saveProgress();
       setSource(state.sourceIndex, target);
@@ -884,24 +894,26 @@ async function boot() {
     showControls();
   }
 
-  function queueSeek(delta) {
+  function queueSeek(delta, preview) {
     if (byId("seek").disabled || !state.scene) return;
     const duration = Number((state.scene.files[0] || {}).duration) || 0;
     state.seekTarget = Math.max(
       0,
       Math.min((state.seekTarget === null ? currentTime() : state.seekTarget) + delta, duration),
     );
-    showPreview(state.seekTarget);
+    if (preview !== false) showPreview(state.seekTarget);
+    else hidePreview();
     scheduleTimeline();
     clearTimeout(state.seekTimer);
     state.seekTimer = setTimeout(function () {
-      seek(state.seekTarget);
+      seek(state.seekTarget, preview);
     }, 120);
   }
 
   async function deleteScene(event) {
     if (byId("delete").disabled || event.detail > 1) return;
     cancelTouch();
+    resetSwipe();
     const id = state.scene.id;
     const queue = state.queue;
     ++state.generation;
@@ -976,6 +988,128 @@ async function boot() {
   let tap = null;
   let touchClickUntil = 0;
 
+  function resetSwipe() {
+    clearTimeout(swipe.timer);
+    cancelAnimationFrame(swipe.frame);
+    swipe.frame = 0;
+    swipe.phase = "idle";
+    swipe.offset = 0;
+    swipe.origin = 0;
+    swipe.backdropOffset = 0;
+    delete player.dataset.swipePhase;
+    video.style.transform = "";
+    const frame = byId("swipe-outgoing");
+    frame.hidden = true;
+    frame.style.transform = "";
+    frame.width = frame.height = 0;
+  }
+
+  function returnSwipe() {
+    if (swipe.phase !== "dragging") return;
+    if (reducedMotion.matches) return resetSwipe();
+    swipe.phase = "returning";
+    player.dataset.swipePhase = "returning";
+    video.style.transform = "translateY(0px)";
+    byId("swipe-outgoing").style.transform = "translateY(" + swipe.backdropOffset + "px)";
+    swipe.timer = setTimeout(function () { resetSwipe(); showControls(); }, 180);
+  }
+
+  function startSwipe() {
+    if (reducedMotion.matches) return;
+    clearTimeout(swipe.timer);
+    cancelAnimationFrame(swipe.frame);
+    swipe.frame = 0;
+    const frame = byId("swipe-outgoing");
+    swipe.origin = new DOMMatrix(getComputedStyle(video).transform).m42;
+    swipe.backdropOffset = frame.hidden ? 0
+      : new DOMMatrix(getComputedStyle(frame).transform).m42 - swipe.origin;
+    swipe.phase = "dragging";
+    player.dataset.swipePhase = "dragging";
+    video.style.transform = "translateY(" + swipe.origin + "px)";
+    frame.style.transform = "translateY(" + (swipe.origin + swipe.backdropOffset) + "px)";
+  }
+
+  function moveSwipe(offset) {
+    if (reducedMotion.matches) return;
+    swipe.phase = "dragging";
+    player.dataset.swipePhase = "dragging";
+    swipe.height = player.clientHeight;
+    const direction = offset < 0 ? 1 : -1;
+    const available = state.queue && advanceQueue(state.queue, direction);
+    const limit = swipe.height * 0.1;
+    const drag = available ? offset : offset / (1 + Math.abs(offset) / limit);
+    swipe.offset = Math.max(-swipe.height, Math.min(swipe.height, swipe.origin + drag));
+    video.style.transform = "translateY(" + swipe.offset + "px)";
+    byId("swipe-outgoing").style.transform = "translateY(" + (swipe.offset + swipe.backdropOffset) + "px)";
+  }
+
+  function commitSwipe(direction) {
+    if (reducedMotion.matches || video.readyState < 2 || !video.videoWidth) {
+      resetSwipe();
+      return;
+    }
+    const frame = byId("swipe-outgoing");
+    frame.width = Math.min(1280, video.videoWidth);
+    frame.height = Math.round(frame.width * video.videoHeight / video.videoWidth);
+    frame.getContext("2d").drawImage(video, 0, 0, frame.width, frame.height);
+    frame.hidden = false;
+    frame.style.transform = "translateY(" + swipe.offset + "px)";
+    swipe.direction = direction;
+    swipe.height = player.clientHeight;
+    swipe.phase = "loading";
+    player.dataset.swipePhase = "loading";
+    video.style.transform = "translateY(" + (swipe.offset + direction * swipe.height) + "px)";
+  }
+
+  function settleSwipe() {
+    if (swipe.phase !== "loading") return;
+    if (reducedMotion.matches) return resetSwipe();
+    swipe.phase = "settling";
+    player.dataset.swipePhase = "settling";
+    swipe.frame = requestAnimationFrame(function () {
+      swipe.frame = 0;
+      video.style.transform = "translateY(0px)";
+      byId("swipe-outgoing").style.transform = "translateY(" + -swipe.direction * swipe.height + "px)";
+      swipe.timer = setTimeout(function () { resetSwipe(); showControls(); }, 180);
+    });
+  }
+
+  function clearSeekFeedback() {
+    clearTimeout(seekFeedback.timer);
+    clearTimeout(seekFeedback.pulseTimer);
+    seekFeedback.side = 0;
+    seekFeedback.until = 0;
+    byId("seek-ripple").style.opacity = "0";
+    byId("seek-ripple").style.transform = "scale(0.95)";
+    byId("seek-feedback").hidden = true;
+  }
+
+  function touchSeek(side, x, y) {
+    const now = performance.now();
+    seekFeedback.seconds = seekFeedback.side === side && now < seekFeedback.until
+      ? seekFeedback.seconds + 10 : 10;
+    seekFeedback.side = side;
+    seekFeedback.until = now + 650;
+    const feedback = byId("seek-feedback");
+    feedback.dataset.side = side > 0 ? "forward" : "backward";
+    feedback.hidden = false;
+    byId("seek-feedback-time").textContent = seekFeedback.seconds + " seconds";
+    const bounds = feedback.getBoundingClientRect();
+    const ripple = byId("seek-ripple");
+    ripple.style.left = x - bounds.left + "px";
+    ripple.style.top = y - bounds.top + "px";
+    ripple.style.opacity = "0.16";
+    ripple.style.transform = "scale(1.04)";
+    clearTimeout(seekFeedback.pulseTimer);
+    seekFeedback.pulseTimer = setTimeout(function () {
+      ripple.style.opacity = "0";
+      ripple.style.transform = "scale(1.08)";
+    }, 80);
+    clearTimeout(seekFeedback.timer);
+    seekFeedback.timer = setTimeout(clearSeekFeedback, 650);
+    queueSeek(side * 10, false);
+  }
+
   function cancelTap() {
     if (tap) clearTimeout(tap.timer);
     tap = null;
@@ -988,13 +1122,16 @@ async function boot() {
       touch = null;
     }
     byId("gesture-feedback").hidden = true;
+    clearSeekFeedback();
     cancelTap();
+    returnSwipe();
   }
 
   surface.addEventListener("pointerdown", function (event) {
     if (event.pointerType !== "touch") return;
+    if (!event.isPrimary || touch) return;
     touchClickUntil = performance.now() + 1000;
-    if (surface.disabled || !event.isPrimary || touch) {
+    if (surface.disabled || swipe.phase === "loading") {
       cancelTouch();
       return;
     }
@@ -1002,7 +1139,7 @@ async function boot() {
     surface.setPointerCapture(event.pointerId);
     touch = {
       id: event.pointerId, x: event.clientX, y: event.clientY,
-      phase: "pending", rate: video.playbackRate, timer: 0,
+      phase: "pending", rate: video.playbackRate, timer: 0, time: performance.now(),
     };
     touch.timer = setTimeout(function () {
       if (!touch || touch.phase !== "pending" || video.paused) return;
@@ -1010,16 +1147,18 @@ async function boot() {
       touch.phase = "holding";
       video.playbackRate = 2;
       byId("gesture-feedback").hidden = false;
-    }, 500);
+    }, 200);
   });
   surface.addEventListener("pointermove", function (event) {
     if (!touch || touch.id !== event.pointerId) return;
     const dx = event.clientX - touch.x;
     const dy = event.clientY - touch.y;
+    if (touch.phase === "swiping") { moveSwipe(dy); return; }
     if (Math.hypot(dx, dy) <= 12 || touch.phase !== "pending") return;
     clearTimeout(touch.timer);
     cancelTap();
-    touch.phase = "moving";
+    touch.phase = Math.abs(dy) > Math.abs(dx) * 1.5 ? "swiping" : "moving";
+    if (touch.phase === "swiping") { startSwipe(); moveSwipe(dy); }
   });
   surface.addEventListener("pointerup", function (event) {
     if (!touch || touch.id !== event.pointerId) return;
@@ -1035,21 +1174,30 @@ async function boot() {
     }
     const dx = event.clientX - ended.x;
     const dy = event.clientY - ended.y;
-    if (ended.phase === "moving" || Math.hypot(dx, dy) > 12) {
+    if (ended.phase === "swiping" || ended.phase === "moving" || Math.hypot(dx, dy) > 12) {
       cancelTap();
-      if (Math.abs(dy) >= 64 && Math.abs(dy) > Math.abs(dx) * 1.5)
-        navigate(dy < 0 ? 1 : -1);
+      const distance = Math.abs(dy);
+      const velocity = distance / Math.max(1, performance.now() - ended.time);
+      const threshold = Math.max(64, Math.min(120, player.clientHeight * 0.12));
+      if (ended.phase === "swiping" && (distance >= threshold || (distance >= 32 && velocity > 0.11)))
+        navigate(dy < 0 ? 1 : -1, true);
+      else returnSwipe();
       return;
     }
     const bounds = surface.getBoundingClientRect();
     const fraction = (ended.x - bounds.left) / bounds.width;
     const side = fraction < 0.35 ? -1 : fraction > 0.65 ? 1 : 0;
     const now = performance.now();
+    if (side && seekFeedback.side === side && now < seekFeedback.until) {
+      cancelTap();
+      touchSeek(side, ended.x, ended.y);
+      return;
+    }
     if (tap && now - tap.time < 300 && side && tap.side === side) {
       const started = tap.started;
       cancelTap();
       if (started) { state.wantsPlay = false; video.pause(); }
-      queueSeek(side * 10);
+      touchSeek(side, ended.x, ended.y);
       return;
     }
     if (tap) {
@@ -1122,28 +1270,65 @@ async function boot() {
   };
   byId("random").onclick = random;
   byId("delete").onclick = deleteScene;
-  byId("seek").addEventListener("pointerdown", function () {
+  function updateScrub(event) {
+    const range = byId("seek");
+    const bounds = range.getBoundingClientRect();
+    range.value = String(seekPosition(event.clientX, bounds.left, bounds.width, Number(range.max)));
+    paintSeek();
+    byId("elapsed").textContent = timeLabel(Number(range.value));
+    showPreview(Number(range.value));
+  }
+
+  function finishScrub(commit) {
+    if (scrub.pointerId === null) return;
+    const range = byId("seek");
+    const id = scrub.pointerId;
+    const target = Number(range.value);
+    scrub.pointerId = null;
+    scrub.dragging = false;
+    if (range.hasPointerCapture(id)) range.releasePointerCapture(id);
+    if (commit) seek(target);
+    else { hidePreview(); scheduleTimeline(); }
+  }
+
+  byId("seek").addEventListener("pointerdown", function (event) {
+    if (!event.isPrimary || this.disabled || (event.pointerType === "mouse" && event.button !== 0)) return;
+    event.preventDefault();
+    finishScrub(false);
+    clearTimeout(state.seekTimer);
+    state.seekTarget = null;
+    scrub.pointerId = event.pointerId;
     scrub.dragging = true;
-    showPreview(Number(this.value));
+    this.setPointerCapture(event.pointerId);
+    updateScrub(event);
   });
   byId("seek").addEventListener("pointermove", function (event) {
-    if (scrub.dragging) return;
+    if (scrub.pointerId !== null) {
+      if (event.pointerId === scrub.pointerId) updateScrub(event);
+      return;
+    }
+    if (event.pointerType === "touch") return;
     const bounds = this.getBoundingClientRect();
     showPreview(seekPosition(event.clientX, bounds.left, bounds.width, Number(this.max)));
   });
   byId("seek").addEventListener("pointerleave", function () {
     if (!scrub.dragging) hidePreview();
   });
-  document.addEventListener("pointerup", function () {
-    if (!scrub.dragging) return;
-    scrub.dragging = false;
-    scrub.hideTimer = setTimeout(hidePreview, 800);
-    showControls();
+  document.addEventListener("pointerup", function (event) {
+    if (event.pointerId !== scrub.pointerId) return;
+    event.preventDefault();
+    updateScrub(event);
+    finishScrub(true);
   });
-  byId("seek").addEventListener("pointercancel", function () {
-    scrub.dragging = false;
-    hidePreview();
-    scheduleTimeline();
+  byId("seek").addEventListener("pointercancel", function (event) {
+    if (event.pointerId === scrub.pointerId) finishScrub(false);
+  });
+  byId("seek").addEventListener("lostpointercapture", function (event) {
+    if (event.pointerId === scrub.pointerId) finishScrub(false);
+  });
+  window.addEventListener("blur", function () { finishScrub(false); });
+  document.addEventListener("visibilitychange", function () {
+    if (document.hidden) finishScrub(false);
   });
   byId("seek").oninput = function () {
     paintSeek();
@@ -1234,6 +1419,7 @@ async function boot() {
       )
         return;
       player.dataset.videoReady = "true";
+      settleSwipe();
       if (state.phase === "loading") {
         if (state.wantsPlay) play();
         else phase("ready", "Press Play to start.");
@@ -1243,6 +1429,7 @@ async function boot() {
   function onPlaying() {
     if (!state.scene || video.currentSrc !== state.sourceURL) return;
     clearTimeout(state.sourceTimer);
+    settleSwipe();
     phase("playing");
     if (!state.playedAt) state.playedAt = performance.now();
     byId("status").textContent =
@@ -1305,7 +1492,8 @@ async function boot() {
   });
   player.addEventListener("mousemove", showControls);
   player.addEventListener("pointerdown", function (event) {
-    if (event.target !== surface || (event.pointerType === "touch" && !event.isPrimary)) cancelTouch();
+    if (!event.isPrimary) return;
+    if (event.target !== surface) cancelTouch();
     showControls();
   });
   player.addEventListener("click", function (event) {
