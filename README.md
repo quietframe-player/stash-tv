@@ -29,6 +29,7 @@ To uninstall, remove **Stash TV** from that page. This removes the plugin, not y
 ## Playback
 
 Click the video to pause or play. Double-click it to enter fullscreen.
+Click the speaker button to open volume adjustment and mute controls.
 Controls hide during playback. Move the pointer or press Up/Down to show them.
 Autoplay and fullscreen still follow your browser's user-gesture rules.
 
@@ -62,6 +63,7 @@ to restore the previous speed. Swipe up for the next video or down for the previ
 Gestures stay on the video area, separate from the seek bar and playback controls.
 
 Portrait mode gives the seek bar a full row and keeps icons at their regular size.
+Volume stays behind its speaker button on desktop and mobile.
 Fullscreen uses the browser API when available and the native video player on iPhones
 that only support video fullscreen. Native iPhone fullscreen uses Apple's controls;
 custom gestures remain available in the inline player.

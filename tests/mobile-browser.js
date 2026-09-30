@@ -67,7 +67,9 @@ export default async function verifyMobile(page, options) {
     after = await sample();
     check(after.paused && Math.abs(after.time-before.time-10)<1.5,'Double tap lost paused state');
     results.push({name:'single tap pause and paused double tap seek',passed:true});
-    await tap(); await page.waitForTimeout(400);
+    await tap();
+    await page.waitForFunction(() => !document.querySelector('#video').paused);
+    await position(10);
 
     const cdp = options.browser === 'chrome' ? await context.newCDPSession(page) : null;
     if (!cdp) await page.evaluate(() => {
@@ -107,12 +109,24 @@ export default async function verifyMobile(page, options) {
     await page.waitForFunction(id=>new URL(location.href).searchParams.get('scene')===id,before.scene);
     await ready();
     results.push({name:'swipe up next and swipe down previous through real Stash queue',passed:true});
+    await page.waitForFunction(() => !document.querySelector('#video').paused);
+    await position(10);
     before=await sample();
     await touch('down',100,350); await touch('move',250,355); await touch('up',250,355);
     check((await sample()).scene===before.scene,'Horizontal drag changed scene');
     await page.locator('#toggle').tap(); await page.waitForTimeout(400);
     check((await sample()).paused, 'Control tap fired video gesture');
     results.push({name:'horizontal drag and playback controls do not navigate',passed:true});
+    check(await page.locator('#volume-panel').isHidden(), 'Volume panel is not collapsed');
+    await page.locator('#mute').tap();
+    check(await page.locator('#volume-panel').isVisible(), 'Volume button did not open panel');
+    await page.locator('#volume').evaluate(el=>{el.value='35';el.dispatchEvent(new Event('input',{bubbles:true}));});
+    check(await page.evaluate(()=>Math.abs(document.querySelector('#video').volume-0.35)<0.01),'Volume slider failed');
+    await page.locator('#volume-mute').tap();
+    check(await page.evaluate(()=>document.querySelector('#video').muted),'Mute action failed');
+    await page.locator('#mute').tap();
+    check(await page.locator('#volume-panel').isHidden(),'Volume button did not close panel');
+    results.push({name:'volume button opens adjustment and mute controls',passed:true});
     await page.locator('#fullscreen').tap();
     await page.waitForTimeout(500);
     const full = await page.evaluate(()=>!!(document.fullscreenElement||document.webkitFullscreenElement||document.querySelector('#video').webkitDisplayingFullscreen));

@@ -120,6 +120,15 @@ export default async function verifyPlayer(page, options) {
     results.push({ name: "Stash navigation launcher preserves selected scene", passed: true });
     await page.goto(options.baseURL + "/plugin/stash-tv/assets/index.html?autoplay=false&scene=" + scene.id + "&seed=1");
     await ready();
+    assert(await page.locator('#volume-panel').isHidden(), 'Desktop volume should start collapsed');
+    await page.locator('#mute').click();
+    assert(await page.locator('#volume-panel').isVisible(), 'Desktop volume button did not open controls');
+    await page.locator('#volume').focus();
+    await page.keyboard.press('ArrowLeft');
+    assert(await page.evaluate(() => document.querySelector('#video').volume < 1), 'Desktop volume adjustment failed');
+    await page.keyboard.press('Escape');
+    assert(await page.locator('#volume-panel').isHidden(), 'Escape did not close volume controls');
+    results.push({name:'desktop volume button and keyboard adjustment',passed:true});
     assert(await page.locator("#delete").isHidden(), "Deletion must be disabled by default");
     results.push({ name: "permanent deletion disabled by default", passed: true });
     assert(await page.locator('#seek-markers').isHidden(), 'Unmarked scene shows marker controls');

@@ -360,7 +360,7 @@ async function boot() {
     player.classList.remove("idle");
     clearTimeout(state.hideTimer);
     scheduleTimeline();
-    if (state.phase === "playing" && !state.buffering && !scrub.dragging && scrub.time === null)
+    if (state.phase === "playing" && !state.buffering && !scrub.dragging && scrub.time === null && byId("volume-panel").hidden)
       state.hideTimer = setTimeout(function () {
         player.classList.add("idle");
         byId("surface").focus();
@@ -374,9 +374,10 @@ async function boot() {
     byId("volume").value = String(value);
     byId("volume").style.setProperty("--progress", value + "%");
     byId("volume").setAttribute("aria-valuetext", value + "%");
-    byId("mute").setAttribute("aria-pressed", String(silent));
-    byId("mute").setAttribute("aria-label", label);
-    byId("mute").title = label;
+    byId("mute").dataset.muted = String(silent);
+    byId("volume-mute").setAttribute("aria-label", label);
+    byId("volume-mute").title = label;
+
     showControls();
   }
 
@@ -1125,7 +1126,29 @@ async function boot() {
   byId("seek").onchange = function () {
     seek(Number(this.value));
   };
+  function closeVolume() {
+    const open = !byId("volume-panel").hidden;
+    byId("volume-panel").hidden = true;
+    byId("mute").setAttribute("aria-expanded", "false");
+    if (open) showControls();
+  }
   byId("mute").onclick = function () {
+    const open = byId("volume-panel").hidden;
+    byId("volume-panel").hidden = !open;
+    byId("mute").setAttribute("aria-expanded", String(open));
+    showControls();
+  };
+  document.addEventListener("pointerdown", function (event) {
+    if (!event.target.closest(".volume-controls")) closeVolume();
+  });
+  document.addEventListener("keydown", function (event) {
+    if (event.key === "Escape" && !byId("volume-panel").hidden) {
+      event.stopImmediatePropagation();
+      closeVolume();
+      byId("mute").focus();
+    }
+  });
+  byId("volume-mute").onclick = function () {
     if (video.muted || video.volume === 0) {
       if (video.volume === 0) video.volume = 1;
       video.muted = false;
