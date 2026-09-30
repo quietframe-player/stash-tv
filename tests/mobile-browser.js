@@ -114,9 +114,9 @@ export default async function verifyMobile(page, options) {
     before=await sample();
     await touch('down',100,350); await touch('move',250,355); await touch('up',250,355);
     check((await sample()).scene===before.scene,'Horizontal drag changed scene');
-    await page.waitForFunction(() => !document.querySelector('#video').paused && !document.querySelector('#video').seeking);
+    await page.waitForFunction(() => !document.querySelector('#video').paused && !document.querySelector('#video').seeking && !document.querySelector('#toggle').disabled && document.querySelector('#player').dataset.buffering === 'false');
     await page.locator('#toggle').tap(); await page.waitForTimeout(400);
-    check((await sample()).paused, 'Control tap fired video gesture');
+    check((await sample()).paused, 'Control tap did not pause: '+JSON.stringify(await sample()));
     results.push({name:'horizontal drag and playback controls do not navigate',passed:true});
     check(await page.locator('#volume-panel').isHidden(), 'Volume panel is not collapsed');
     await page.locator('#mute').tap();
