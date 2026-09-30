@@ -1,4 +1,6 @@
 :root {
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
   color-scheme: dark;
   font:
     18px Arial,
@@ -39,6 +41,37 @@ body,
 #player[data-video-ready="true"] #video {
   opacity: 1;
 }
+#swipe-outgoing {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
+  pointer-events: none;
+}
+#player[data-swipe-phase="dragging"] #video,
+#player[data-swipe-phase="dragging"] #swipe-outgoing,
+#player[data-swipe-phase="loading"] #video,
+#player[data-swipe-phase="settling"] #video,
+#player[data-swipe-phase="returning"] #video,
+#player[data-swipe-phase="loading"] #swipe-outgoing,
+#player[data-swipe-phase="settling"] #swipe-outgoing {
+  will-change: transform;
+}
+#player[data-swipe-phase="settling"] #video,
+#player[data-swipe-phase="settling"] #swipe-outgoing,
+#player[data-swipe-phase="returning"] #video,
+#player[data-swipe-phase="returning"] #swipe-outgoing {
+  transition: transform 160ms var(--ease-drawer);
+}
+#player[data-swipe-phase] .chrome {
+  opacity: 0;
+  pointer-events: none;
+}
+#player[data-swipe-phase] .chrome * {
+  pointer-events: none;
+}
 #surface {
   position: absolute;
   top: 0;
@@ -57,7 +90,7 @@ body,
   left: 0;
   right: 0;
   z-index: 2;
-  transition: opacity 180ms;
+  transition: opacity 140ms var(--ease-out);
 }
 footer {
   bottom: 0;
@@ -307,16 +340,21 @@ button {
     animation: none;
   }
 }
-button:hover,
-select:hover {
-  background: #ffffff18;
+@media (hover: hover) and (pointer: fine) {
+  button:hover,
+  select:hover {
+    background: #ffffff18;
+  }
 }
 button:focus {
   outline: none;
+}
+button:focus-visible {
   background: #ffffff18;
 }
 button:active {
   background: #ffffff28;
+  transition-duration: 0ms;
 }
 button::-moz-focus-inner {
   border: 0;
@@ -373,6 +411,47 @@ select {
   border-radius: 20px;
   background: #000b;
   pointer-events: none;
+  font-size: 16px;
+  font-weight: 600;
+}
+#seek-feedback {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 50%;
+  z-index: 3;
+  overflow: hidden;
+  border-radius: 0 50% 50% 0;
+  background: #0003;
+  pointer-events: none;
+}
+#seek-feedback[data-side="forward"] {
+  left: auto;
+  right: 0;
+  border-radius: 50% 0 0 50%;
+}
+.seek-feedback-content {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  font-size: 15px;
+  font-weight: 600;
+  text-shadow: 0 1px 4px #000;
+}
+#seek-feedback[data-side="backward"] .seek-arrows { transform: rotate(180deg); }
+#seek-ripple {
+  position: absolute;
+  width: 360px;
+  height: 360px;
+  margin: -180px;
+  border-radius: 50%;
+  background: #fff;
+  opacity: 0;
+  transform: scale(0.95);
+  transition: transform 180ms var(--ease-out), opacity 100ms var(--ease-out);
 }
 #surface {
   touch-action: none;
@@ -453,4 +532,8 @@ select {
   nav { grid-template-columns: repeat(7, 40px); }
   nav button { width: 40px; padding: 8px; }
   #volume-mute { width: 44px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  #video, #swipe-outgoing { transition: none !important; }
+  #seek-ripple { transform: none !important; transition: opacity 100ms var(--ease-out); }
 }
