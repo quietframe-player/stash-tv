@@ -5,6 +5,28 @@ export default async function verifyMobile(page, options) {
     viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true,
   });
   page = await context.newPage();
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.addInitScript(() => {
+    window.mobileEvents = [];
+    const record = (type, extra = {}) => {
+      const video = document.querySelector('#video');
+      window.mobileEvents.push({ type, wall:performance.now(), time:video?.currentTime,
+        paused:video?.paused, seeking:video?.seeking, ready:video?.readyState,
+        phase:document.querySelector('#player')?.dataset.phase, ...extra });
+    };
+    const play = HTMLMediaElement.prototype.play;
+    HTMLMediaElement.prototype.play = function(...args) {
+      record('play-call');
+      const result = play.apply(this,args);
+      result.then(() => record('play-resolved'),error => record('play-rejected', {name:error.name,message:error.message}));
+      return result;
+    };
+    for (const type of ['pointerdown','pointerup','pointercancel','lostpointercapture','click'])
+      document.addEventListener(type,e=>record(type,{target:e.target.id,trusted:e.isTrusted,primary:e.isPrimary}),true);
+    for (const type of ['playing','pause','seeking','seeked','waiting','error'])
+      document.addEventListener(type,()=>record(type),true);
+  });
   const api = async (query, variables = {}) => {
     const response = await page.request.post(options.baseURL + '/graphql', { data: { query, variables } });
     const body = await response.json();
@@ -175,6 +197,7 @@ export default async function verifyMobile(page, options) {
     return { passed:true, browser:options.browser, results };
   } catch(error) {
     await page.screenshot({ path:options.reportDir + '/' + options.browser + '-mobile-failure.png' });
-    return { passed:false, browser:options.browser, error:error.message, results };
+    return { passed:false, browser:options.browser, error:error.message, results, errors,
+      events:await page.evaluate(()=>window.mobileEvents) };
   } finally { await context.close(); }
 }

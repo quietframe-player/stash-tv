@@ -33,9 +33,9 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - run: npx --yes --package @playwright/cli@0.1.21 playwright-cli install-browser ${{ matrix.browser }} --with-deps
+      - run: python3 -B scripts/integration.py --apply --suite mobile --browser ${{ matrix.browser }}
       - run: python3 -B scripts/integration.py --apply --browser ${{ matrix.browser }}
       - run: python3 -B scripts/integration.py --apply --suite plugin --browser ${{ matrix.browser }}
-      - run: python3 -B scripts/integration.py --apply --suite mobile --browser ${{ matrix.browser }}
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
