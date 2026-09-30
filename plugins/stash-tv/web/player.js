@@ -1230,7 +1230,7 @@ async function boot() {
         video.currentSrc !== state.sourceURL ||
         state.resume ||
         video.seeking ||
-        video.readyState < 3
+        video.readyState < 2
       )
         return;
       player.dataset.videoReady = "true";
@@ -1240,7 +1240,7 @@ async function boot() {
       } else setBuffering(false);
     });
   });
-  video.addEventListener("playing", function () {
+  function onPlaying() {
     if (!state.scene || video.currentSrc !== state.sourceURL) return;
     clearTimeout(state.sourceTimer);
     phase("playing");
@@ -1261,7 +1261,8 @@ async function boot() {
       mark("playing");
     } else mark("resumed");
     showControls();
-  });
+  }
+  video.addEventListener("playing", onPlaying);
   video.addEventListener("pause", function () {
     if (touch && touch.phase === "holding") cancelTouch();
     if (state.phase !== "playing") return;
@@ -1280,7 +1281,15 @@ async function boot() {
     saveProgress();
     navigate(1);
   });
-  video.addEventListener("timeupdate", scheduleTimeline);
+  video.addEventListener("timeupdate", function () {
+    scheduleTimeline();
+    if (!state.scene || video.currentSrc !== state.sourceURL || state.resume ||
+        video.paused || video.ended || video.seeking || video.readyState < 2) return;
+    if (["loading", "ready", "paused"].includes(state.phase)) {
+      player.dataset.videoReady = "true";
+      onPlaying();
+    } else if (state.phase === "playing" && state.buffering) setBuffering(false);
+  });
   video.addEventListener("error", function () {
     if (!state.scene || video.currentSrc !== state.sourceURL) return;
     const code = video.error && video.error.code;

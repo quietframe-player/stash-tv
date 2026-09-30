@@ -55,7 +55,10 @@ export default async function verifyMobile(page, options) {
     await page.setViewportSize({ width:390, height:844 });
     const sample = () => page.evaluate(() => {
       const v = document.querySelector('#video');
-      return { time:v.currentTime, paused:v.paused, rate:v.playbackRate, scene:new URL(location.href).searchParams.get('scene') };
+      const player = document.querySelector('#player');
+      return { time:v.currentTime, paused:v.paused, rate:v.playbackRate,
+        phase:player.dataset.phase, buffering:player.dataset.buffering,
+        scene:new URL(location.href).searchParams.get('scene') };
     });
     const tap = (x=195,y=350) => page.touchscreen.tap(x,y);
     const position = async seconds => {
@@ -94,11 +97,14 @@ export default async function verifyMobile(page, options) {
     }));
     await tap();
     await page.waitForFunction(() => !document.querySelector('#video').paused, null, {timeout:5000});
-    await page.evaluate(() => delete document.querySelector('#video').readyState);
     before = await sample();
     await page.waitForTimeout(500);
     after = await sample();
-    check(!after.paused && after.time > before.time, 'Resume did not continue from current-frame readiness');
+    check(!after.paused && after.time > before.time && after.phase === 'playing' && after.buffering === 'false',
+      'Resume did not continue from current-frame readiness: '+JSON.stringify(after));
+    await position(10);
+    check((await sample()).buffering === 'false', 'Seek left buffering active with current-frame readiness');
+    await page.evaluate(() => delete document.querySelector('#video').readyState);
     results.push({name:'trusted tap resumes with current-frame readiness and continues playback',passed:true});
     await position(10);
 
