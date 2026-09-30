@@ -3,6 +3,7 @@
 import hashlib
 import json
 from pathlib import Path
+import shutil
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -39,6 +40,11 @@ def build():
              f"  path: stash-tv.zip\n  sha256: {digest}\n")
     (output / "index.yml").write_text(index)
     (output / ".nojekyll").touch()
+    landing = (ROOT / "site" / "index.html").read_text()
+    landing = landing.replace("{{VERSION}}", version).replace(
+        "{{SOURCE_URL}}", "https://quietframe-player.github.io/stash-tv/index.yml")
+    (output / "index.html").write_text(landing)
+    shutil.copytree(ROOT / "site" / "assets", output / "assets", dirs_exist_ok=True)
     print(json.dumps({"version": version, "archive": str(archive), "sha256": digest}))
 
 
