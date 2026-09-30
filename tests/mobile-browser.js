@@ -122,6 +122,7 @@ export default async function verifyMobile(page, options) {
     if (cdp) {
       const box = await page.locator('#toggle').boundingBox();
       await touch('down',box.x+box.width/2,box.y+box.height/2);
+      await page.waitForTimeout(80);
       await touch('up',box.x+box.width/2,box.y+box.height/2);
     } else await page.locator('#toggle').tap();
     await page.waitForTimeout(400);
