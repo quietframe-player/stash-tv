@@ -89,8 +89,17 @@ export default async function verifyMobile(page, options) {
     after = await sample();
     check(after.paused && Math.abs(after.time-before.time-10)<1.5,'Double tap lost paused state');
     results.push({name:'single tap pause and paused double tap seek',passed:true});
+    await page.evaluate(() => Object.defineProperty(document.querySelector('#video'), 'readyState', {
+      configurable:true, get:()=>HTMLMediaElement.HAVE_CURRENT_DATA,
+    }));
     await tap();
-    await page.waitForFunction(() => !document.querySelector('#video').paused);
+    await page.waitForFunction(() => !document.querySelector('#video').paused, null, {timeout:5000});
+    await page.evaluate(() => delete document.querySelector('#video').readyState);
+    before = await sample();
+    await page.waitForTimeout(500);
+    after = await sample();
+    check(!after.paused && after.time > before.time, 'Resume did not continue from current-frame readiness');
+    results.push({name:'trusted tap resumes with current-frame readiness and continues playback',passed:true});
     await position(10);
 
     const cdp = options.browser === 'chrome' ? await context.newCDPSession(page) : null;
