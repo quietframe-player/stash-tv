@@ -210,9 +210,10 @@ export default async function verifyPlayer(page, options) {
         actual: document.getElementById("video").volume,
         muted: document.getElementById("video").muted,
         slider: Number(document.getElementById("volume").value),
-        label: document.getElementById("mute").getAttribute("aria-label"),
+        label: document.getElementById("volume-mute").getAttribute("aria-label"),
       }));
     await page.mouse.move(200, 100);
+    await page.locator("#mute").click();
     const volumeBox = await page.locator("#volume").boundingBox();
     await page.mouse.click(volumeBox.x + volumeBox.width / 2, volumeBox.y + volumeBox.height / 2);
     const initialVolume = await volume();
@@ -220,15 +221,15 @@ export default async function verifyPlayer(page, options) {
       Math.abs(initialVolume.actual - 0.5) < 0.06 && !initialVolume.muted,
       "Volume slider did not change audio",
     );
-    await page.locator("#mute").click();
+    await page.locator("#volume-mute").click();
     await page.waitForFunction(() => document.getElementById("volume").value === "0");
     assert(
       (await volume()).muted && (await volume()).label === "Unmute",
       "Mute UI disagrees with audio",
     );
-    await page.locator("#mute").click();
+    await page.locator("#volume-mute").click();
     await page.waitForFunction(
-      () => document.getElementById("mute").getAttribute("aria-label") === "Mute",
+      () => document.getElementById("volume-mute").getAttribute("aria-label") === "Mute",
     );
     assert(
       (await volume()).actual === initialVolume.actual && !(await volume()).muted,
@@ -268,7 +269,7 @@ export default async function verifyPlayer(page, options) {
       Math.abs(afterVolumeKeys.time - beforeVolumeKeys.time) < 2 && !afterVolumeKeys.paused,
       "Volume keys sought or paused video",
     );
-    await page.locator("#mute").focus();
+    await page.locator("#volume-mute").focus();
     await page.keyboard.press("Space");
     await page.waitForFunction(() => document.getElementById("video").muted);
     assert(!(await sample()).paused, "Mute button Space paused video");
