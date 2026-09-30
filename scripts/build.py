@@ -34,8 +34,8 @@ def build():
             package.writestr(entry, (ROOT / name).read_bytes())
     digest = hashlib.sha256(archive.read_bytes()).hexdigest()
     index = (f"- id: stash-tv\n  name: Stash TV\n  metadata:\n"
-             f"    description: Lightweight fullscreen player for TV remotes and desktop browsers.\n"
-             f"  version: {version}\n  date: 2026-09-27 00:00:00\n"
+             f"    description: Lightweight fullscreen player for TV remotes, phones, and desktop browsers.\n"
+             f"  version: {version}\n  date: 2026-09-28 00:00:00\n"
              f"  path: stash-tv.zip\n  sha256: {digest}\n")
     (output / "index.yml").write_text(index)
     (output / ".nojekyll").touch()

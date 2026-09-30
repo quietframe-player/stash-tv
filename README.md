@@ -1,6 +1,6 @@
 # Stash TV
 
-A lightweight player for [Stash](https://stashapp.cc/), built for TV remotes and desktop browsers.
+A lightweight player for [Stash](https://stashapp.cc/), built for TV remotes, phones, and desktop browsers.
 It keeps one video element loaded as you move through a shuffled queue. The player has compact
 icon controls, a seek bar, frame previews, volume controls, and saved playback positions.
 No separate service, Node runtime, or frontend build is needed to use it.
@@ -28,7 +28,8 @@ To uninstall, remove **Stash TV** from that page. This removes the plugin, not y
 
 ## Playback
 
-Click the video to pause or play. Double-click it to toggle fullscreen.
+Click the video to pause or play. Double-click it to enter fullscreen.
+Click the speaker button to open volume adjustment and mute controls.
 Controls hide during playback. Move the pointer or press Up/Down to show them.
 Autoplay and fullscreen still follow your browser's user-gesture rules.
 
@@ -53,6 +54,19 @@ The player prefers the original stream and can fall back to compatible Stash str
 Codec support depends on the browser and device. If a WebM transcode reports a
 premature end, the player recovers through an available MP4 stream at the same resolution. When playback fails, a quality selector appears.
 Resume positions follow Stash's **Always start from beginning** preference.
+
+## Touch controls
+
+On phones, tap the video to pause or play. Double-tap the left or right side to seek
+backward or forward 10 seconds. Press and hold during playback for 2× speed; release
+to restore the previous speed. Swipe up for the next video or down for the previous one.
+Gestures stay on the video area, separate from the seek bar and playback controls.
+
+Portrait mode gives the seek bar a full row and keeps icons at their regular size.
+Volume stays behind its speaker button on desktop and mobile.
+Fullscreen uses the browser API when available and the native video player on iPhones
+that only support video fullscreen. Native iPhone fullscreen uses Apple's controls;
+custom gestures remain available in the inline player.
 
 ## Scene markers
 
@@ -85,6 +99,7 @@ bun test
 python3 scripts/build.py
 python3 scripts/integration.py --apply
 python3 scripts/integration.py --apply --suite plugin
+python3 scripts/integration.py --apply --suite mobile
 ```
 
 The builder uses Python's standard library. It creates `dist/stash-tv.zip` and `dist/index.yml` with

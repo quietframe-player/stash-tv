@@ -2,16 +2,17 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="referrer" content="same-origin" />
     <title>Stash TV</title>
-    <link rel="stylesheet" href="./style.css?v=0.2.0" />
-    <script type="module" src="./player.js?v=0.2.0"></script>
+    <link rel="stylesheet" href="./style.css?v=0.3.0" />
+    <script type="module" src="./player.js?v=0.3.0"></script>
   </head>
   <body>
     <main id="player" tabindex="-1" aria-label="Stash TV player" data-phase="loading">
       <video id="video" playsinline preload="metadata"></video>
       <button id="surface" type="button" aria-label="Play video"></button>
+      <span id="gesture-feedback" hidden aria-live="polite">2×</span>
       <footer class="chrome">
         <div class="timeline">
           <div id="seek-preview" hidden aria-hidden="true">
@@ -160,7 +161,7 @@
             </svg>
           </button>
           <div class="volume-controls">
-            <button id="mute" type="button" aria-label="Mute" title="Mute" aria-pressed="false">
+            <button id="mute" type="button" aria-label="Volume" title="Volume" aria-expanded="false" aria-controls="volume-panel">
               <svg
                 class="icon icon-volume-2"
                 aria-hidden="true"
@@ -202,6 +203,7 @@
                 <path d="m16.5 9.5 5 5" />
               </svg>
             </button>
+            <div id="volume-panel" hidden role="group" aria-label="Volume controls">
             <input
               id="volume"
               type="range"
@@ -212,6 +214,27 @@
               aria-label="Volume"
               aria-valuetext="100%"
             />
+              <button id="volume-mute" type="button" aria-label="Mute" title="Mute">              <svg
+                class="icon icon-volume-x"
+                aria-hidden="true"
+                focusable="false"
+                xmlns="http://www.w3.org/2000/svg"
+                width="24"
+                height="24"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path
+                  d="M11 4.702a.7.7 0 0 0-1.203-.498L6.413 7.587A1.4 1.4 0 0 1 5.416 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.416a1.4 1.4 0 0 1 .997.413l3.383 3.384A.7.7 0 0 0 11 19.298z"
+                />
+                <path d="m16.5 14.5 5-5" />
+                <path d="m16.5 9.5 5 5" />
+              </svg></button>
+            </div>
           </div>
           <label id="quality-controls" class="source-label" hidden
             >Quality

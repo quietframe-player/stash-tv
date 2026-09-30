@@ -95,9 +95,16 @@ export default async function verifyPlayer(page, options) {
     );
   };
   const continues = async (name, milliseconds = 6000) => {
-    const before = await sample();
+    let before = await sample();
     await page.waitForTimeout(milliseconds);
-    const after = await sample();
+    let after = await sample();
+    if (after.source !== before.source && after.phase === "loading") {
+      await page.waitForFunction(() => document.getElementById("player").dataset.phase === "playing" &&
+        !document.getElementById("video").paused, null, { timeout: 15000 });
+      before = await sample();
+      await page.waitForTimeout(milliseconds);
+      after = await sample();
+    }
     assert(
       !after.paused &&
         !after.ended &&
@@ -120,6 +127,15 @@ export default async function verifyPlayer(page, options) {
     results.push({ name: "Stash navigation launcher preserves selected scene", passed: true });
     await page.goto(options.baseURL + "/plugin/stash-tv/assets/index.html?autoplay=false&scene=" + scene.id + "&seed=1");
     await ready();
+    assert(await page.locator('#volume-panel').isHidden(), 'Desktop volume should start collapsed');
+    await page.locator('#mute').click();
+    assert(await page.locator('#volume-panel').isVisible(), 'Desktop volume button did not open controls');
+    await page.locator('#volume').focus();
+    await page.keyboard.press('ArrowLeft');
+    assert(await page.evaluate(() => document.querySelector('#video').volume < 1), 'Desktop volume adjustment failed');
+    await page.keyboard.press('Escape');
+    assert(await page.locator('#volume-panel').isHidden(), 'Escape did not close volume controls');
+    results.push({name:'desktop volume button and keyboard adjustment',passed:true});
     assert(await page.locator("#delete").isHidden(), "Deletion must be disabled by default");
     results.push({ name: "permanent deletion disabled by default", passed: true });
     assert(await page.locator('#seek-markers').isHidden(), 'Unmarked scene shows marker controls');
@@ -201,9 +217,10 @@ export default async function verifyPlayer(page, options) {
         actual: document.getElementById("video").volume,
         muted: document.getElementById("video").muted,
         slider: Number(document.getElementById("volume").value),
-        label: document.getElementById("mute").getAttribute("aria-label"),
+        label: document.getElementById("volume-mute").getAttribute("aria-label"),
       }));
     await page.mouse.move(200, 100);
+    await page.locator("#mute").click();
     const volumeBox = await page.locator("#volume").boundingBox();
     await page.mouse.click(volumeBox.x + volumeBox.width / 2, volumeBox.y + volumeBox.height / 2);
     const initialVolume = await volume();
@@ -211,15 +228,15 @@ export default async function verifyPlayer(page, options) {
       Math.abs(initialVolume.actual - 0.5) < 0.06 && !initialVolume.muted,
       "Volume slider did not change audio",
     );
-    await page.locator("#mute").click();
+    await page.locator("#volume-mute").click();
     await page.waitForFunction(() => document.getElementById("volume").value === "0");
     assert(
       (await volume()).muted && (await volume()).label === "Unmute",
       "Mute UI disagrees with audio",
     );
-    await page.locator("#mute").click();
+    await page.locator("#volume-mute").click();
     await page.waitForFunction(
-      () => document.getElementById("mute").getAttribute("aria-label") === "Mute",
+      () => document.getElementById("volume-mute").getAttribute("aria-label") === "Mute",
     );
     assert(
       (await volume()).actual === initialVolume.actual && !(await volume()).muted,
@@ -259,7 +276,7 @@ export default async function verifyPlayer(page, options) {
       Math.abs(afterVolumeKeys.time - beforeVolumeKeys.time) < 2 && !afterVolumeKeys.paused,
       "Volume keys sought or paused video",
     );
-    await page.locator("#mute").focus();
+    await page.locator("#volume-mute").focus();
     await page.keyboard.press("Space");
     await page.waitForFunction(() => document.getElementById("video").muted);
     assert(!(await sample()).paused, "Mute button Space paused video");

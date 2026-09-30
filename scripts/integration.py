@@ -113,6 +113,8 @@ plugins_path: /config/plugins
             raise RuntimeError("Isolated Stash did not become ready")
         print(json.dumps(install(base_url, package_url, apply=True)), flush=True)
         print(json.dumps(install(base_url, package_url, apply=True)), flush=True)
+        if args.suite == "mobile":
+            command(["docker", "exec", container, "ffmpeg", "-hide_banner", "-loglevel", "error", "-i", "/media/sintel.mp4", "-t", "50", "-c", "copy", "/media/sintel-short.mp4"])
         api("mutation($input:ScanMetadataInput!){metadataScan(input:$input)}", {
             "input": {"paths": ["/media"], "scanGenerateSprites": True,
                       "scanGenerateCovers": True, "scanGeneratePreviews": False,
@@ -120,12 +122,12 @@ plugins_path: /config/plugins
         })
         for _ in range(90):
             scanned = api("{findScenes{count}jobQueue{id}}")
-            if scanned['findScenes']['count'] == 1 and not scanned['jobQueue']:
+            if scanned['findScenes']['count'] == (2 if args.suite == 'mobile' else 1) and not scanned['jobQueue']:
                 break
             time.sleep(1)
         else:
             raise RuntimeError("Sintel scan and preview generation did not finish")
-        source = (ROOT / ("tests/plugin-browser.js" if args.suite == "plugin" else "tests/browser.js")).read_text()
+        source = (ROOT / {"plugin": "tests/plugin-browser.js", "mobile": "tests/mobile-browser.js", "playback": "tests/browser.js"}[args.suite]).read_text()
         source = source.replace("export default ", "", 1)
         for browser in browsers:
             session = f"stash-tv-{token}-{browser}"
@@ -166,6 +168,6 @@ plugins_path: /config/plugins
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--apply", action="store_true", help="Download the fixture and run isolated local integration tests")
-    parser.add_argument("--suite", choices=["playback", "plugin"], default="playback")
+    parser.add_argument("--suite", choices=["playback", "plugin", "mobile"], default="playback")
     parser.add_argument("--browser", choices=["chrome", "webkit"], action="append")
     run(parser.parse_args())
