@@ -696,7 +696,7 @@ async function boot() {
 
   function play() {
     state.wantsPlay = true;
-    if (!state.scene || !state.sourceURL || state.resume || video.seeking || video.readyState < 3)
+    if (!state.scene || !state.sourceURL || state.resume)
       return;
     const generation = state.generation;
     video.play().catch(function (error) {
