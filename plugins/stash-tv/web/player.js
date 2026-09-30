@@ -1314,9 +1314,10 @@ async function boot() {
       showControls();
       return;
     }
-    if (event.target === byId("mute") && (event.key === " " || event.keyCode === 32)) {
+    if ((event.target === byId("mute") || event.target === byId("volume-mute")) &&
+        (event.key === " " || event.keyCode === 32)) {
       event.preventDefault();
-      if (!event.repeat) byId("mute").click();
+      if (!event.repeat) event.target.click();
       return;
     }
     if (event.target === byId("delete") && (event.key === " " || event.keyCode === 32)) {
