@@ -31,7 +31,9 @@ export default async function verifyPlugin(page, options) {
     await settings(true);
     await page.reload();
     await page.waitForFunction(() => !document.getElementById('delete').disabled);
+    await page.locator('#more').click();
     check(await page.locator('#delete').isVisible(), 'Delete setting was not applied');
+    await page.keyboard.press('Escape');
     results.push({ name: 'server-backed deletion opt-in', passed: true });
     await config({ username: 'integration', password: 'isolated-test-password' });
     await page.context().clearCookies();
@@ -47,7 +49,7 @@ export default async function verifyPlugin(page, options) {
     await config({ username: '', password: '' });
     if (options.destructive) {
       await page.mouse.move(200, 100);
-      await page.locator('#delete').click();
+      await page.locator("#more").click(); await page.locator('#delete').click();
       await page.waitForFunction(() => document.getElementById('player').dataset.phase === 'empty');
       const readback = await api('{findScenes{count}}');
       check(readback.findScenes.count === 0, 'Deleted test scene is still in Stash');

@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="referrer" content="same-origin" />
     <title>Stash TV</title>
-    <link rel="stylesheet" href="./style.css?v=0.5.1" />
-    <script type="module" src="./player.js?v=0.5.1"></script>
+    <link rel="stylesheet" href="./style.css?v=0.5.2" />
+    <script type="module" src="./player.js?v=0.5.2"></script>
   </head>
   <body>
     <main id="player" tabindex="-1" aria-label="Stash TV player" data-phase="loading">
@@ -16,11 +16,6 @@
           <canvas id="swipe-incoming" hidden aria-hidden="true"></canvas>
           <canvas id="swipe-outgoing" hidden aria-hidden="true"></canvas>
         </div>
-      </div>
-      <div hidden aria-hidden="true">
-        <svg class="icon icon-ellipsis" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" /><circle cx="5" cy="12" r="1" />
-        </svg>
       </div>
       <button id="surface" type="button" aria-label="Play video"></button>
       <span id="gesture-feedback" hidden aria-live="polite">2×</span>
@@ -51,27 +46,7 @@
         </div>
         <!-- Lucide SVGs, ISC license. See LUCIDE-LICENSE.txt and the README. -->
         <nav aria-label="Playback controls">
-          <button id="previous" type="button" aria-label="Previous video" title="Previous video">
-            <svg
-              class="icon icon-skip-back"
-              aria-hidden="true"
-              focusable="false"
-              xmlns="http://www.w3.org/2000/svg"
-              width="24"
-              height="24"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            >
-              <path
-                d="M17.971 4.285A2 2 0 0 1 21 6v12a2 2 0 0 1-3.029 1.715l-9.997-5.998a2 2 0 0 1-.003-3.432z"
-              />
-              <path d="M3 20V4" />
-            </svg></button
-          ><button id="toggle" type="button" aria-label="Play" title="Play" aria-busy="true">
+<button id="toggle" type="button" aria-label="Play" title="Play" aria-busy="true">
             <svg
               class="icon icon-loader-circle"
               aria-hidden="true"
@@ -139,72 +114,8 @@
               <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
               <path d="M3 3v5h5" />
             </svg></button
-          ><button id="next" type="button" aria-label="Next video" title="Next video">
-            <svg
-              class="icon icon-skip-forward"
-              aria-hidden="true"
-              focusable="false"
-              xmlns="http://www.w3.org/2000/svg"
-              width="24"
-              height="24"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            >
-              <path d="M21 4v16" />
-              <path
-                d="M6.029 4.285A2 2 0 0 0 3 6v12a2 2 0 0 0 3.029 1.715l9.997-5.998a2 2 0 0 0 .003-3.432z"
-              />
-            </svg></button
-          ><button id="random" type="button" aria-label="Random video" title="Random video">
-            <svg
-              class="icon icon-shuffle"
-              aria-hidden="true"
-              focusable="false"
-              xmlns="http://www.w3.org/2000/svg"
-              width="24"
-              height="24"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            >
-              <path d="m18 14 4 4-4 4" />
-              <path d="m18 2 4 4-4 4" />
-              <path d="M2 18h1.973a4 4 0 0 0 3.3-1.7l5.454-8.6a4 4 0 0 1 3.3-1.7H22" />
-              <path d="M2 6h1.972a4 4 0 0 1 3.6 2.2" />
-              <path d="M22 18h-6.041a4 4 0 0 1-3.3-1.8l-.359-.45" />
-            </svg>
-          </button>
-          <button id="layout-two" type="button" aria-label="Two videos" title="2 videos" aria-pressed="false" disabled>
-            <svg class="icon" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <rect width="18" height="18" x="3" y="3" rx="2" /><path d="M12 3v18" />
-            </svg>
-          </button>
-          <button id="layout-four" type="button" aria-label="Four videos" title="4 videos" aria-pressed="false" disabled>
-            <svg class="icon" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M12 3v18" /><path d="M3 12h18" /><rect x="3" y="3" width="18" height="18" rx="2" />
-            </svg>
-          </button>
-          <button id="zoom" type="button" aria-label="Fill screen" title="Fill screen" aria-pressed="false">
-            <svg class="icon icon-zoom-in" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <circle cx="11" cy="11" r="8" />
-              <line x1="21" x2="16.65" y1="21" y2="16.65" />
-              <line x1="11" x2="11" y1="8" y2="14" />
-              <line x1="8" x2="14" y1="11" y2="11" />
-            </svg>
-            <svg class="icon icon-zoom-out" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <circle cx="11" cy="11" r="8" />
-              <line x1="21" x2="16.65" y1="21" y2="16.65" />
-              <line x1="8" x2="14" y1="11" y2="11" />
-            </svg>
-          </button>
-          <div class="volume-controls">
+          >
+<div class="volume-controls">
             <button id="mute" type="button" aria-label="Volume" title="Volume" aria-expanded="false" aria-controls="volume-panel">
               <svg
                 class="icon icon-volume-2"
@@ -280,38 +191,20 @@
               </svg></button>
             </div>
           </div>
-          <label id="quality-controls" class="source-label" hidden
-            >Quality
-            <select id="source" aria-label="Stream quality"></select></label
-          ><button
-            id="delete"
-            type="button"
-            aria-label="Permanently delete video"
-            title="Permanently delete video and files"
-            hidden
-            disabled
-          >
-            <svg
-              class="icon icon-trash"
-              aria-hidden="true"
-              focusable="false"
-              xmlns="http://www.w3.org/2000/svg"
-              width="24"
-              height="24"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            >
-              <path d="M10 11v6" />
-              <path d="M14 11v6" />
-              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
-              <path d="M3 6h18" />
-              <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-            </svg></button
-          ><button id="fullscreen" type="button" aria-label="Fullscreen" title="Fullscreen">
+<button id="zoom" type="button" aria-label="Fill screen" title="Fill screen" aria-pressed="false">
+            <svg class="icon icon-zoom-in" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="11" cy="11" r="8" />
+              <line x1="21" x2="16.65" y1="21" y2="16.65" />
+              <line x1="11" x2="11" y1="8" y2="14" />
+              <line x1="8" x2="14" y1="11" y2="11" />
+            </svg>
+            <svg class="icon icon-zoom-out" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="11" cy="11" r="8" />
+              <line x1="21" x2="16.65" y1="21" y2="16.65" />
+              <line x1="8" x2="14" y1="11" y2="11" />
+            </svg>
+          </button>
+<button id="fullscreen" type="button" aria-label="Fullscreen" title="Fullscreen">
             <svg
               class="icon icon-maximize"
               aria-hidden="true"
@@ -350,7 +243,121 @@
               <path d="M16 21v-3a2 2 0 0 1 2-2h3" />
             </svg>
           </button>
-        </nav>
+<div class="more-controls">
+            <button id="more" type="button" aria-label="More controls" title="More controls" aria-expanded="false" aria-controls="more-panel"><svg class="icon icon-ellipsis" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" /><circle cx="5" cy="12" r="1" />
+        </svg></button>
+            <div id="more-panel" role="group" aria-label="Navigation and layout" hidden>
+<button id="previous" type="button" aria-label="Previous video" title="Previous video">
+            <svg
+              class="icon icon-skip-back"
+              aria-hidden="true"
+              focusable="false"
+              xmlns="http://www.w3.org/2000/svg"
+              width="24"
+              height="24"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path
+                d="M17.971 4.285A2 2 0 0 1 21 6v12a2 2 0 0 1-3.029 1.715l-9.997-5.998a2 2 0 0 1-.003-3.432z"
+              />
+              <path d="M3 20V4" />
+            </svg></button
+          >
+<button id="random" type="button" aria-label="Random video" title="Random video">
+            <svg
+              class="icon icon-shuffle"
+              aria-hidden="true"
+              focusable="false"
+              xmlns="http://www.w3.org/2000/svg"
+              width="24"
+              height="24"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="m18 14 4 4-4 4" />
+              <path d="m18 2 4 4-4 4" />
+              <path d="M2 18h1.973a4 4 0 0 0 3.3-1.7l5.454-8.6a4 4 0 0 1 3.3-1.7H22" />
+              <path d="M2 6h1.972a4 4 0 0 1 3.6 2.2" />
+              <path d="M22 18h-6.041a4 4 0 0 1-3.3-1.8l-.359-.45" />
+            </svg>
+          </button>
+<button id="next" type="button" aria-label="Next video" title="Next video">
+            <svg
+              class="icon icon-skip-forward"
+              aria-hidden="true"
+              focusable="false"
+              xmlns="http://www.w3.org/2000/svg"
+              width="24"
+              height="24"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M21 4v16" />
+              <path
+                d="M6.029 4.285A2 2 0 0 0 3 6v12a2 2 0 0 0 3.029 1.715l9.997-5.998a2 2 0 0 0 .003-3.432z"
+              />
+            </svg></button
+          >
+<button id="layout-two" type="button" aria-label="Two videos" title="2 videos" aria-pressed="false" disabled>
+            <svg class="icon" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect width="18" height="18" x="3" y="3" rx="2" /><path d="M12 3v18" />
+            </svg>
+          </button>
+<button id="layout-four" type="button" aria-label="Four videos" title="4 videos" aria-pressed="false" disabled>
+            <svg class="icon" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 3v18" /><path d="M3 12h18" /><rect x="3" y="3" width="18" height="18" rx="2" />
+            </svg>
+          </button>
+<button
+            id="delete"
+            type="button"
+            aria-label="Permanently delete video"
+            title="Permanently delete video and files"
+            hidden
+            disabled
+          >
+            <svg
+              class="icon icon-trash"
+              aria-hidden="true"
+              focusable="false"
+              xmlns="http://www.w3.org/2000/svg"
+              width="24"
+              height="24"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M10 11v6" />
+              <path d="M14 11v6" />
+              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+              <path d="M3 6h18" />
+              <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+            </svg></button
+          >
+</div>
+          </div>
+<label id="quality-controls" class="source-label" hidden
+            >Quality
+            <select id="source" aria-label="Stream quality"></select></label
+          >
+</nav>
         <p id="status" class="message" role="status" hidden></p>
         <p id="notice" class="message" role="status"></p>
       </footer>
