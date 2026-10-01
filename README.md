@@ -30,7 +30,7 @@ To uninstall, remove **Stash TV** from that page. This removes the plugin, not y
 
 Click the video to pause or play. Double-click it to enter fullscreen.
 Click the speaker button to open volume adjustment and mute controls.
-Controls hide during playback. Move the pointer or press Up/Down to show them.
+Controls hide during playback. Move the pointer or tap the video to show them.
 Autoplay and fullscreen still follow your browser's user-gesture rules.
 
 | Key | Action |
@@ -43,6 +43,7 @@ Autoplay and fullscreen still follow your browser's user-gesture rules.
 | W / S | Volume up / down by 5% |
 | F / LG Blue | Next video |
 | Shift+F / LG Red | Previous video |
+| Up / Down | Next / previous video with a vertical transition |
 | R / LG Green | Random video |
 | Delete | Permanently delete, when enabled |
 
@@ -67,14 +68,19 @@ tap on the same side adds another 10 seconds. Hold-to-2× activates after 200 ms
 changes speed on the current stream. Drag the seek bar in either direction, then
 release to seek; cancellation keeps the current playback position.
 
-During a vertical swipe, the video follows your finger. On release, its last decoded
-frame stays visible until the next scene is ready at its saved position, then both
-slide in the swipe direction. A short or cancelled drag returns to the current video.
-The player still uses one video decoder. Reduced-motion settings disable the slide
-and ripple animation while keeping the same gestures.
+During a vertical swipe, the current and incoming views follow your finger.
+Release completes the slide immediately while the next video loads. Neighboring
+scenes have their metadata and resume-position previews prepared in advance;
+returning to a watched scene reuses its last decoded frame. The preview stays visible
+until the video is ready at its saved position. A short or cancelled drag returns to
+the current video. The player keeps one video decoder and at most three cached stills.
+With Reduce Motion enabled, dragging still follows your finger and release uses
+a short fade instead of a slide.
 
 Portrait mode gives the seek bar a full row and keeps icons at their regular size.
 Volume stays behind its speaker button on desktop and mobile.
+On touch devices, the zoom button toggles between fitting the whole video and
+filling the screen by cropping its edges. The choice stays active between videos.
 Fullscreen uses the browser API when available and the native video player on iPhones
 that only support video fullscreen. Native iPhone fullscreen uses Apple's controls;
 custom gestures remain available in the inline player.

@@ -41,7 +41,8 @@ body,
 #player[data-video-ready="true"] #video {
   opacity: 1;
 }
-#swipe-outgoing {
+#swipe-outgoing,
+#swipe-incoming {
   position: absolute;
   inset: 0;
   width: 100%;
@@ -49,6 +50,18 @@ body,
   object-fit: contain;
   background: #000;
   pointer-events: none;
+}
+#player[data-fit="cover"] #video,
+#player[data-fit="cover"] #swipe-outgoing,
+#player[data-fit="cover"] #swipe-incoming {
+  object-fit: cover;
+}
+#zoom { display: none; }
+#zoom .icon-zoom-out,
+#zoom[aria-pressed="true"] .icon-zoom-in { display: none; }
+#zoom[aria-pressed="true"] .icon-zoom-out { display: block; }
+@media (pointer: coarse) {
+  #zoom { display: inline-flex; }
 }
 #player[data-swipe-phase="dragging"] #video,
 #player[data-swipe-phase="dragging"] #swipe-outgoing,
@@ -59,17 +72,28 @@ body,
 #player[data-swipe-phase="settling"] #swipe-outgoing {
   will-change: transform;
 }
+#player[data-swipe-phase="dragging"] #swipe-incoming,
+#player[data-swipe-phase="settling"] #swipe-incoming,
+#player[data-swipe-phase="returning"] #swipe-incoming {
+  will-change: transform;
+}
 #player[data-swipe-phase="settling"] #video,
 #player[data-swipe-phase="settling"] #swipe-outgoing,
 #player[data-swipe-phase="returning"] #video,
-#player[data-swipe-phase="returning"] #swipe-outgoing {
+#player[data-swipe-phase="returning"] #swipe-outgoing,
+#player[data-swipe-phase="settling"] #swipe-incoming,
+#player[data-swipe-phase="returning"] #swipe-incoming {
   transition: transform 160ms var(--ease-drawer);
 }
-#player[data-swipe-phase] .chrome {
+#player[data-swipe-phase="fading"] #swipe-outgoing {
+  will-change: opacity;
+  transition: opacity 160ms var(--ease-out);
+}
+#player[data-swipe-phase]:not([data-swipe-phase="loading"]) .chrome {
   opacity: 0;
   pointer-events: none;
 }
-#player[data-swipe-phase] .chrome * {
+#player[data-swipe-phase]:not([data-swipe-phase="loading"]) .chrome * {
   pointer-events: none;
 }
 #surface {
@@ -533,7 +557,15 @@ select {
   nav button { width: 40px; padding: 8px; }
   #volume-mute { width: 44px; }
 }
+@media (max-width: 600px) and (pointer: coarse) {
+  nav { grid-template-columns: repeat(8, minmax(0, 44px)); }
+  nav button { width: 100%; padding: 6px; }
+  #zoom { grid-row: 1; grid-column: 5; }
+  .volume-controls { grid-column: 6; }
+  #delete { grid-column: 7; }
+  #fullscreen { grid-column: 8; }
+  #volume-mute { width: 44px; }
+}
 @media (prefers-reduced-motion: reduce) {
-  #video, #swipe-outgoing { transition: none !important; }
   #seek-ripple { transform: none !important; transition: opacity 100ms var(--ease-out); }
 }
