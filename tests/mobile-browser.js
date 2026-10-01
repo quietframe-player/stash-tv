@@ -256,12 +256,21 @@ export default async function verifyMobile(page, options) {
     await page.screenshot({path:options.reportDir+'/'+options.browser+'-swipe-drag.png'});
     await touch('up',195,320);
     check(await page.evaluate(() => ['loading','settling'].includes(document.querySelector('#player').dataset.swipePhase) && !document.querySelector('#swipe-outgoing').hidden), 'Outgoing decoded frame not retained during handoff');
-    await page.waitForTimeout(40);
-    const slide=await page.evaluate(()=>({
-      outgoing:new DOMMatrix(getComputedStyle(document.querySelector('#swipe-outgoing')).transform).m42,
-      incoming:new DOMMatrix(getComputedStyle(document.querySelector('#swipe-incoming')).transform).m42,
-      height:document.querySelector('#player').clientHeight,
-    }));
+    await page.waitForFunction(()=>document.querySelector('#swipe-outgoing').getAnimations()
+      .some(animation=>animation.transitionProperty==='transform'));
+    const slide=await page.evaluate(()=>{
+      const outgoing=document.querySelector('#swipe-outgoing'), incoming=document.querySelector('#swipe-incoming');
+      const animations=[...outgoing.getAnimations(),...incoming.getAnimations()]
+        .filter(animation=>animation.transitionProperty==='transform');
+      for(const animation of animations) { animation.pause(); animation.currentTime=40; }
+      const pose={
+        outgoing:new DOMMatrix(getComputedStyle(outgoing).transform).m42,
+        incoming:new DOMMatrix(getComputedStyle(incoming).transform).m42,
+        height:document.querySelector('#player').clientHeight,
+      };
+      for(const animation of animations) animation.play();
+      return pose;
+    });
     check(slide.outgoing < -130 && slide.outgoing > -slide.height &&
       Math.abs(slide.incoming-slide.outgoing-slide.height)<2,
       'Swipe pages did not interpolate together immediately after release: '+JSON.stringify(slide));
