@@ -37,20 +37,18 @@ export default async function verifyLatency(page, options) {
     await page.locator("#source").selectOption({ label: "MP4 Low (240p)" }, { force: true });
     await ready();
     const restartMs = Date.now() - began;
-    if (options.browser === "chrome") await page.locator("#surface").click();
-    await page.waitForFunction(() => {
-      const video = document.getElementById("video");
-      return (navigator.userAgent.includes("Chrome") ? [video.buffered] : [video.buffered, video.seekable]).every(ranges => {
+    const hasWindow = () => page.locator("#video").evaluate(video => {
+      return [video.buffered, video.seekable].every(ranges => {
         for (let i = 0; i < ranges.length; i++) if (ranges.start(i) <= 1 && ranges.end(i) > 7) return true;
         return false;
       });
     });
-    if (options.browser === "chrome") await page.locator("#surface").click();
-    const reusable = await page.locator("#video").evaluate(video => {
-      for (let i = 0; i < video.seekable.length; i++)
-        if (video.seekable.start(i) <= 1 && video.seekable.end(i) > 7) return true;
-      return false;
-    });
+    if (!await hasWindow()) {
+      await page.locator("#surface").click();
+      await page.waitForTimeout(1200);
+      await page.locator("#surface").click();
+    }
+    const reusable = await hasWindow();
     const source = await page.locator("#video").evaluate(video => video.currentSrc);
     await page.request.get(options.baseURL + "/_test/reset");
     for (const seconds of [11, 14, 10, 13]) latencies.push(await seek(seconds));
@@ -81,7 +79,9 @@ export default async function verifyLatency(page, options) {
     const coldMs = Date.now() - coldBegan;
     const rawRequests = (await (await page.request.get(options.baseURL + "/_test/requests")).json())
       .filter(request => request.id === matroska);
-    if (options.browser === "webkit") {
+    const unsupportedMatroska = options.browser === "webkit" &&
+      !await page.locator("#video").evaluate(video => video.canPlayType("video/x-matroska"));
+    if (unsupportedMatroska) {
       check(await page.locator("#video").evaluate(video => /\/stream\.(mp4|webm|m3u8)$/.test(new URL(video.currentSrc).pathname)), "WebKit did not select a compatible stream");
       const direct = rawRequests.filter(request => request.path.endsWith("/stream"));
       check(direct.length <= 1 && direct.every(request => request.range === "bytes=0-15" && request.bytes === 16),
@@ -96,7 +96,7 @@ export default async function verifyLatency(page, options) {
     check(await page.locator("#video").evaluate(video => video.paused), "Compatible stream seeking lost pause state");
     results.push({ name: "compatible playback seeks forward and backward to exact scene times", passed: true });
 
-    if (options.browser === "webkit") {
+    if (unsupportedMatroska) {
       const context = await page.context().browser().newContext({ serviceWorkers: "block" });
       try {
         const stored = await context.newPage();
