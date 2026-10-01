@@ -1,7 +1,7 @@
 # Stash TV
 
 A lightweight player for [Stash](https://stashapp.cc/), built for TV remotes, phones, and desktop browsers.
-It keeps one video element loaded as you move through a shuffled queue. The player has compact
+It keeps one video element loaded in single view as you move through a shuffled queue. The player has compact
 icon controls, a seek bar, frame previews, volume controls, and saved playback positions.
 No separate service, Node runtime, or frontend build is needed to use it.
 
@@ -32,6 +32,23 @@ Click the video to pause or play. Double-click it to enter fullscreen.
 Click the speaker button to open volume adjustment and mute controls.
 Controls hide during playback. Move the pointer or tap the video to show them.
 Autoplay and fullscreen still follow your browser's user-gesture rules.
+
+The split-screen and grid buttons play **two or four distinct random videos** together.
+Click the selected layout button again to return to a single video. Two videos sit beside
+each other in landscape and stack in portrait. Four videos fill a 2×2 grid. Tiles have
+no gaps or borders and crop their edges to fill the available space.
+
+The current video stays in the first tile with its soundtrack. Extra tiles are muted.
+Play, pause, and Random control the whole grid. The seek bar, volume, Next, Previous,
+and Delete control the first tile. When an extra video ends, its tile picks another
+random scene. All tiles save their playback positions in Stash.
+
+Extra streams load only while multiview is selected and unload when you return to single
+view. Neighbor preparation pauses during multiview to give the playing videos bandwidth.
+Simultaneous playback depends on your device's video decoders and the available network
+and Stash streaming capacity.
+Multiview fullscreen uses the browser's fullscreen API for the whole player. On devices
+with only native single-video fullscreen, the grid stays inline.
 
 | Key | Action |
 | --- | --- |
@@ -92,7 +109,7 @@ frame at that same checkpoint. This frame stays visible until playback is ready 
 the saved position. If an exact frame is unavailable, the loading view stays blank.
 Other containers, oversized indexes, unsupported codecs, and browsers without service
 workers keep normal playback. Preparation never starts neighboring transcodes or
-changes video quality. Buffering requires HTTPS or localhost. There remains one
+changes video quality. Buffering requires HTTPS or localhost. Single view uses one
 native video element and at most four cached stills.
 Neighbor metadata loads concurrently with the current video. Media preparation still
 yields to playback and seeking. Converted streams reuse their buffered, seekable

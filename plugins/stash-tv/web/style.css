@@ -31,6 +31,62 @@ body,
   width: 100vw;
   height: 100vh;
 }
+#views {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  gap: 0;
+}
+.view {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+#player[data-layout="2"] #views,
+#player[data-layout="4"] #views { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+#player[data-layout="4"] #views { grid-template-rows: repeat(2, minmax(0, 1fr)); }
+#player[data-layout="2"] .view video,
+#player[data-layout="4"] .view video,
+#player[data-layout="2"] .view canvas,
+#player[data-layout="4"] .view canvas { object-fit: cover; }
+@media (orientation: portrait) {
+  #player[data-layout="2"] #views {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: repeat(2, minmax(0, 1fr));
+  }
+}
+.extra-view video,
+.extra-view canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.extra-view video { opacity: 0; }
+.extra-view[data-decoded="true"] video { opacity: 1; }
+.extra-view canvas { position: absolute; inset: 0; }
+.extra-view .tile-retry {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 2;
+  background: #0008;
+}
+.tile-retry .icon-rotate-ccw { display: block; }
+.extra-view .tile-loading {
+  display: block;
+  position: absolute;
+  top: calc(50% - 12px);
+  left: calc(50% - 12px);
+  z-index: 1;
+}
+.extra-view:not([data-phase="loading"]) .tile-loading { display: none; }
+#layout-two[aria-pressed="true"],
+#layout-four[aria-pressed="true"] { background: #ffffff28; }
 #video {
   opacity: 0;
   display: block;
@@ -565,6 +621,10 @@ select {
   #delete { grid-column: 7; }
   #fullscreen { grid-column: 8; }
   #volume-mute { width: 44px; }
+}
+@media (max-width: 600px) {
+  #layout-two { grid-row: 2; grid-column: 1; }
+  #layout-four { grid-row: 2; grid-column: 2; }
 }
 @media (prefers-reduced-motion: reduce) {
   #seek-ripple { transform: none !important; transition: opacity 100ms var(--ease-out); }

@@ -37,6 +37,7 @@ jobs:
       - run: python3 -B scripts/integration.py --apply --suite buffering --browser ${{ matrix.browser }}
       - run: python3 -B scripts/integration.py --apply --suite latency --browser ${{ matrix.browser }}
       - run: python3 -B scripts/integration.py --apply --suite handoff --browser ${{ matrix.browser }}
+      - run: python3 -B scripts/integration.py --apply --suite multiview --browser ${{ matrix.browser }}
       - run: python3 -B scripts/integration.py --apply --browser ${{ matrix.browser }}
       - run: python3 -B scripts/integration.py --apply --suite plugin --browser ${{ matrix.browser }}
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

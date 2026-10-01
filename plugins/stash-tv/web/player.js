@@ -241,6 +241,8 @@ async function boot() {
   let buffer = null;
   let bufferSetup = null;
   let readyFrame = 0;
+  let multiview = null;
+  let multiviewSetup = null;
   const scrub = {
     exactTime: null,
     status: "idle",
@@ -278,6 +280,7 @@ async function boot() {
     timelineFrame: 0,
     seekTarget: null,
     seekTimer: 0,
+    layout: 1,
   };
   let activity = Promise.resolve();
   const reducedMotion = function () { return matchMedia("(prefers-reduced-motion: reduce)").matches; };
@@ -352,6 +355,10 @@ async function boot() {
     ["surface", "toggle", "random", "seek", "source"].forEach(function (id) {
       byId(id).disabled = blocked;
     });
+    const available = new Set(state.queue?.ids).size;
+    byId("layout-two").disabled = blocked || available < 2;
+    byId("layout-four").disabled = blocked || available < 4;
+    if (blocked) multiview?.setPlaying(false);
     byId("delete").disabled = !state.enableDelete || blocked || !state.scene;
     byId("previous").disabled = blocked || !state.queue || state.queue.index === 0;
     byId("next").disabled =
@@ -364,7 +371,7 @@ async function boot() {
     state.buffering = value;
     player.dataset.buffering = String(value);
     byId("toggle").setAttribute("aria-busy", String(value));
-    buffer?.pause(document.hidden || value || !["ready", "playing", "paused"].includes(state.phase));
+    buffer?.pause(state.layout > 1 || document.hidden || value || !["ready", "playing", "paused"].includes(state.phase));
     showControls();
   }
 
@@ -411,6 +418,7 @@ async function boot() {
     const request = player.requestFullscreen || player.webkitRequestFullscreen;
     function nativeFullscreen() {
       try {
+        if (state.layout > 1) throw new Error("Multiview requires fullscreen for the whole player");
         if (!video.webkitEnterFullscreen) throw new Error("Fullscreen unavailable");
         video.webkitEnterFullscreen();
       } catch {
@@ -806,6 +814,7 @@ async function boot() {
   }
 
   async function warmNeighbours() {
+    if (state.layout > 1) return;
     const generation = state.generation;
     const queue = state.queue;
     if (!queue) return;
@@ -821,15 +830,16 @@ async function boot() {
           signature: [file.id, file.size, file.mod_time].join(":"), current: direction === 0 };
       } catch { return null; }
     }))).filter(Boolean);
-    if (generation !== state.generation) return;
+    if (generation !== state.generation || state.layout > 1) return;
     const service = buffer || (items.some(item => !item.current) ? await ensureBuffer() : null);
-    if (!service || generation !== state.generation) return;
+    if (!service || generation !== state.generation || state.layout > 1) return;
     service.pause(document.hidden || state.buffering || !["ready", "playing", "paused"].includes(state.phase));
     service.update(items);
   }
 
   function play() {
     state.wantsPlay = true;
+    multiview?.setPlaying(true);
     if (!state.scene || !state.sourceURL || state.resume)
       return;
     const generation = state.generation;
@@ -837,6 +847,7 @@ async function boot() {
       if (generation !== state.generation || error.name === "AbortError") return;
       if (error.name === "NotAllowedError") {
         state.wantsPlay = false;
+        multiview?.setPlaying(false);
         presentFrame();
         phase("ready", "Press Play to start.");
         showControls();
@@ -910,6 +921,10 @@ async function boot() {
     showControls();
     const queue = state.queue;
     const id = queue.ids[queue.index];
+    const available = new Set(queue.ids).size;
+    if (state.layout > available) setLayout(available >= 2 ? 2 : 1);
+    multiview?.primaryChanged(id);
+    multiview?.setPlaying(state.wantsPlay);
     byId("previous").disabled = queue.index === 0;
     byId("next").disabled = queue.index === queue.ids.length - 1;
     byId("notice").textContent = "";
@@ -968,6 +983,7 @@ async function boot() {
       cache.clear();
       stills.clear();
       await loadScene();
+      if ([2, 4].includes(Number(params.get("layout")))) setLayout(Number(params.get("layout")));
     } catch (error) {
       phase("error", error.message);
       showControls();
@@ -996,6 +1012,8 @@ async function boot() {
     if (!queue) return;
     state.queue = queue;
     state.wantsPlay = true;
+    multiview?.shuffle();
+    multiview?.setPlaying(true);
     loadScene();
     byId("surface").focus();
   }
@@ -1006,14 +1024,71 @@ async function boot() {
       state.wantsPlay = true;
       if (state.queue) loadScene();
       else loadQueue();
-    } else if (video.paused) {
+    } else if (video.paused && !(state.layout > 1 && state.wantsPlay)) {
       play();
     } else {
       state.wantsPlay = false;
+      multiview?.setPlaying(false);
       video.pause();
     }
     byId("surface").focus();
     showControls();
+  }
+
+  async function setLayout(count) {
+    if (![1, 2, 4].includes(count) || !state.queue || count > new Set(state.queue.ids).size) return;
+    cancelTouch();
+    endWheel();
+    resetSwipe();
+    state.layout = count;
+    player.dataset.layout = String(count);
+    byId("fullscreen").disabled = count > 1 &&
+      (!player.requestFullscreen && !player.webkitRequestFullscreen ||
+       document.fullscreenEnabled === false && document.webkitFullscreenEnabled !== true);
+    for (const [size, id] of [[2, "layout-two"], [4, "layout-four"]]) {
+      byId(id).setAttribute("aria-pressed", String(count === size));
+      byId(id).title = count === size ? "Single video" : size + " videos";
+    }
+    if (count === 1) params.delete("layout");
+    else params.set("layout", String(count));
+    history.replaceState(null, "", location.pathname + "?" + params.toString());
+    buffer?.pause(count > 1 || document.hidden || state.buffering);
+    showControls();
+    if (count > 1 && !multiviewSetup) {
+      const url = new URL("./multiview.js", import.meta.url);
+      url.search = new URL(import.meta.url).search;
+      multiviewSetup = import(url.href).then(module => {
+        multiview = module.createMultiview({
+          root: byId("views"),
+          ids: () => state.queue.ids,
+          primary: () => state.queue.ids[state.queue.index],
+          getScene, checkpoint, sourceAt, truncatedWebmFallback,
+          retryIcon: byId("toggle").querySelector(".icon-rotate-ccw"),
+          loadingIcon: byId("toggle").querySelector(".icon-loader-circle"),
+          played: id => api("mutation TVPlayed($id:ID!){sceneIncrementPlayCount(id:$id)}", { id }).catch(() => {}),
+          save: (scene, resume, duration, keepalive) => {
+            if (!state.fromBeginning) positions.set(scene.id, resume);
+            scene.resume_time = resume;
+            const write = () => api(
+              "mutation TVActivity($id:ID!,$resume:Float!,$duration:Float!){sceneSaveActivity(id:$id,resume_time:$resume,playDuration:$duration)}",
+              { id: scene.id, resume, duration }, keepalive, 45000);
+            activity = (keepalive ? Promise.all([activity.catch(() => {}), write()]) :
+              activity.catch(() => {}).then(write)).catch(() => {
+                byId("notice").textContent = "Resume position could not be saved.";
+              });
+          },
+        });
+      }).catch(() => {
+        multiviewSetup = null;
+        setLayout(1);
+        byId("notice").textContent = "Multiple videos could not load. Try again.";
+      });
+    }
+    if (multiviewSetup) await multiviewSetup;
+    multiview?.suspend(document.hidden);
+    multiview?.setPlaying(state.wantsPlay);
+    multiview?.setCount(state.layout);
+    if (state.layout === 1) warmNeighbours();
   }
 
   function seek(seconds, preview) {
@@ -1239,7 +1314,7 @@ async function boot() {
   function moveSwipe(offset) {
     swipe.phase = "dragging";
     player.dataset.swipePhase = "dragging";
-    swipe.height = player.clientHeight;
+    swipe.height = byId("primary-view").clientHeight;
     const direction = offset < 0 ? 1 : -1;
     const available = state.queue && advanceQueue(state.queue, direction);
     if (available) prepareIncoming(available.ids[available.index], direction);
@@ -1254,7 +1329,7 @@ async function boot() {
 
   function prepareIncoming(id, direction) {
     swipe.direction = direction;
-    swipe.height = player.clientHeight;
+    swipe.height = byId("primary-view").clientHeight;
     if (swipe.target === id) return;
     swipe.target = id;
     const generation = ++swipe.generation;
@@ -1515,14 +1590,18 @@ async function boot() {
   window.addEventListener("pagehide", cancelTouch);
   document.addEventListener("visibilitychange", function () {
     if (document.hidden) { cancelTouch(); endWheel(); }
-    buffer?.pause(document.hidden || state.buffering || !["ready", "playing", "paused"].includes(state.phase));
+    multiview?.suspend(document.hidden);
+    buffer?.pause(state.layout > 1 || document.hidden || state.buffering || !["ready", "playing", "paused"].includes(state.phase));
     if (!document.hidden) warmNeighbours();
   });
   window.addEventListener("pagehide", function (event) {
     buffer?.pause(true);
+    if (event.persisted) multiview?.suspend(true);
+    else { multiview?.dispose(true); multiview = null; multiviewSetup = null; }
     if (!event.persisted) { buffer?.update([]); buffer?.dispose(); }
   });
   window.addEventListener("pageshow", function (event) {
+    if (event.persisted) multiview?.suspend(document.hidden);
     if (event.persisted) warmNeighbours();
   });
 
@@ -1568,6 +1647,11 @@ async function boot() {
     byId("surface").focus();
   };
   byId("random").onclick = random;
+  for (const [count, id] of [[2, "layout-two"], [4, "layout-four"]]) byId(id).onclick = () => {
+    const target = state.layout === count ? 1 : count;
+    setLayout(target);
+    if (target > 1) play();
+  };
   byId("delete").onclick = deleteScene;
   function updateScrub(event) {
     const range = byId("seek");
@@ -1765,6 +1849,7 @@ async function boot() {
   video.addEventListener("pause", function () {
     if (touch && touch.phase === "holding") cancelTouch();
     if (!state.wantsPlay && state.scene && video.currentSrc === state.sourceURL) presentFrame();
+    if (!state.wantsPlay) multiview?.setPlaying(false);
     if (state.phase !== "playing") return;
     saveProgress();
     phase("paused", "Paused");
@@ -1851,8 +1936,10 @@ async function boot() {
       showControls();
       return;
     }
-    if ((event.target === byId("mute") || event.target === byId("volume-mute")) &&
-        (event.key === " " || event.keyCode === 32)) {
+    if (([byId("mute"), byId("volume-mute")].includes(event.target) &&
+         (event.key === " " || event.keyCode === 32)) ||
+        ([byId("layout-two"), byId("layout-four")].includes(event.target) &&
+         (event.key === " " || event.key === "Enter"))) {
       event.preventDefault();
       if (!event.repeat) event.target.click();
       return;

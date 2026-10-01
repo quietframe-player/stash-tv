@@ -160,7 +160,7 @@ plugins_path: /config/plugins
             command(["docker", "exec", container, "ffmpeg", "-hide_banner", "-loglevel", "error", "-i", "/media/sintel.mp4", "-t", "50", "-c", "copy", "/media/sintel-short.mp4"])
         elif args.suite == "latency":
             command(["docker", "exec", container, "ffmpeg", "-hide_banner", "-loglevel", "error", "-i", "/media/sintel.mp4", "-c", "copy", "/media/sintel.mkv"])
-        elif args.suite == "buffering":
+        elif args.suite in ["buffering", "multiview"]:
             for length in [40, 43, 46, 49]:
                 delayed = ["-itsoffset", "0.066"] if length == 43 else []
                 progressive = ["-movflags", "+faststart"] if length != 46 else []
@@ -176,16 +176,16 @@ plugins_path: /config/plugins
         })
         for _ in range(90):
             scanned = api("{findScenes{count}jobQueue{id}}")
-            expected = {"mobile": 2, "buffering": 5, "latency": 2, "handoff": 2}.get(args.suite, 1)
+            expected = {"mobile": 2, "buffering": 5, "multiview": 5, "latency": 2, "handoff": 2}.get(args.suite, 1)
             if scanned['findScenes']['count'] == expected and not scanned['jobQueue']:
                 break
             time.sleep(1)
         else:
             raise RuntimeError("Sintel scan and preview generation did not finish")
-        if args.suite in ["buffering", "mobile", "latency", "handoff"]:
+        if args.suite in ["buffering", "mobile", "latency", "handoff", "multiview"]:
             proxy = MediaProxy(port)
             base_url = proxy.url
-        source = (ROOT / {"plugin": "tests/plugin-browser.js", "mobile": "tests/mobile-browser.js", "playback": "tests/browser.js", "buffering": "tests/buffering-browser.js", "latency": "tests/latency-browser.js", "handoff": "tests/handoff-browser.js"}[args.suite]).read_text()
+        source = (ROOT / {"plugin": "tests/plugin-browser.js", "mobile": "tests/mobile-browser.js", "playback": "tests/browser.js", "buffering": "tests/buffering-browser.js", "latency": "tests/latency-browser.js", "handoff": "tests/handoff-browser.js", "multiview": "tests/multiview-browser.js"}[args.suite]).read_text()
         source = source.replace("export default ", "", 1)
         for browser in browsers:
             session = f"stash-tv-{token}-{browser}"
@@ -231,6 +231,6 @@ plugins_path: /config/plugins
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--apply", action="store_true", help="Download the fixture and run isolated local integration tests")
-    parser.add_argument("--suite", choices=["playback", "plugin", "mobile", "buffering", "latency", "handoff"], default="playback")
+    parser.add_argument("--suite", choices=["playback", "plugin", "mobile", "buffering", "latency", "handoff", "multiview"], default="playback")
     parser.add_argument("--browser", choices=["chrome", "webkit"], action="append")
     run(parser.parse_args())
