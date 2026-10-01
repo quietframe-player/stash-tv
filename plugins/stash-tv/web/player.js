@@ -237,6 +237,10 @@ async function boot() {
   const debug = params.get("debug") === "1";
   const cache = new Map();
   const stills = new Map();
+  const positions = new Map();
+  let buffer = null;
+  let bufferSetup = null;
+  let readyFrame = 0;
   const scrub = {
     exactTime: null,
     status: "idle",
@@ -360,6 +364,7 @@ async function boot() {
     state.buffering = value;
     player.dataset.buffering = String(value);
     byId("toggle").setAttribute("aria-busy", String(value));
+    buffer?.pause(document.hidden || value || !["ready", "playing", "paused"].includes(state.phase));
     showControls();
   }
 
@@ -426,6 +431,11 @@ async function boot() {
   }
 
   function saveProgress(keepalive) {
+    if (state.scene && !state.fromBeginning && !video.seeking && video.readyState >= 2) {
+      const position = video.ended ? 0 : currentTime();
+      positions.set(state.scene.id, position);
+      state.scene.resume_time = position;
+    }
     if (!state.scene || !state.counted) return;
     const generation = state.generation;
     const warning = "Resume position could not be saved.";
@@ -686,7 +696,7 @@ async function boot() {
   function getScene(id) {
     if (cache.has(id)) return cache.get(id);
     const query =
-      "query TVScene($id:ID!){findScene(id:$id){id resume_time paths{stream vtt screenshot} sceneStreams{url mime_type label} files{duration} scene_markers{id title seconds end_seconds primary_tag{name}}}}";
+      "query TVScene($id:ID!){findScene(id:$id){id resume_time paths{stream vtt screenshot} sceneStreams{url mime_type label} files{id size duration format mod_time} scene_markers{id title seconds end_seconds primary_tag{name}}}}";
     const promise = api(query, { id: id })
       .then(function (data) {
         if (!data.findScene) throw new Error("This scene is no longer in Stash. Choose Next.");
@@ -697,7 +707,7 @@ async function boot() {
         throw error;
       });
     cache.set(id, promise);
-    while (cache.size > 3) cache.delete(cache.keys().next().value);
+    while (cache.size > 4) cache.delete(cache.keys().next().value);
     return promise;
   }
 
@@ -710,50 +720,77 @@ async function boot() {
       width, height, 0, 0, canvas.width, canvas.height);
   }
 
-  function storeStill(id, promise) {
-    stills.set(id, promise);
-    while (stills.size > 3) stills.delete(stills.keys().next().value);
+  function checkpoint(scene) {
+    if (state.fromBeginning) return 0;
+    const seconds = positions.has(scene.id) ? positions.get(scene.id) : Number(scene.resume_time) || 0;
+    return Math.max(0, Math.min(seconds, Number(scene.files[0]?.duration) - 0.05 || 0));
+  }
+
+  function versionOriginal(scene, source) {
+    const file = scene.files[0];
+    if (!file || source.offset || new URL(source.url).pathname.endsWith(".m3u8")) return source;
+    const url = new URL(source.url);
+    url.searchParams.set("stash_tv_file", [file.id, file.size, file.mod_time].join(":"));
+    return { ...source, url: url.href };
+  }
+
+  function storeStill(id, seconds, promise) {
+    stills.set(id, { seconds, promise });
+    while (stills.size > 4) stills.delete(stills.keys().next().value);
     return promise;
   }
 
   function getStill(id) {
-    if (stills.has(id)) return stills.get(id);
-    return storeStill(id, getScene(id).then(async function (scene) {
-      const seconds = state.fromBeginning ? 0 : Number(scene.resume_time) || 0;
-      let cue = null;
-      if (scene.paths.vtt) {
-        const url = new URL(scene.paths.vtt, location.origin);
-        if (url.origin !== location.origin) return null;
-        const controller = new AbortController();
-        const timer = setTimeout(function () { controller.abort(); }, 10000);
-        try {
-          const response = await fetch(url.href, { signal: controller.signal, credentials: "same-origin" });
-          if (response.ok) cue = previewAt(previewCues(await response.text(), url.href, location.origin), seconds);
-        } finally { clearTimeout(timer); }
-      }
-      if (!cue && (seconds > 0 || !scene.paths.screenshot)) return null;
-      const url = new URL(cue ? cue.url : scene.paths.screenshot, location.origin);
-      if (url.origin !== location.origin) return null;
-      const image = new Image();
-      await new Promise(function (resolve, reject) {
-        image.onload = resolve;
-        image.onerror = reject;
-        image.src = url.href;
-      });
-      if (cue && (cue.x + cue.width > image.naturalWidth || cue.y + cue.height > image.naturalHeight)) return null;
+    return getScene(id).then(function (scene) {
+      const still = stills.get(id);
+      return still && still.seconds === checkpoint(scene) ? still.promise : null;
+    }).catch(function () { return null; });
+  }
+
+  function ensureBuffer() {
+    const moduleURL = new URL("./buffering.js", import.meta.url);
+    moduleURL.search = new URL(import.meta.url).search;
+    if (!bufferSetup) bufferSetup = import(moduleURL.href).then(module => module.createBuffer(function (prepared) {
+      if (!prepared.bitmap) return;
       const canvas = document.createElement("canvas");
-      drawStill(canvas, image, cue || { x: 0, y: 0, width: image.naturalWidth, height: image.naturalHeight });
-      return canvas;
-    }).catch(function () { return null; }));
+      drawStill(canvas, prepared.bitmap);
+      prepared.bitmap.close();
+      canvas.dataset.position = String(prepared.seconds);
+      canvas.dataset.frameTime = String(prepared.frameTime);
+      storeStill(prepared.id, prepared.seconds, Promise.resolve(canvas));
+      if (swipe.target === prepared.id) getStill(prepared.id).then(frame => {
+        if (frame && swipe.target === prepared.id) drawStill(byId("swipe-incoming"), frame);
+      });
+    }, function (status) {
+      if (status.cacheBytes !== undefined) player.dataset.cacheBytes = String(status.cacheBytes);
+      if (status.entries !== undefined) player.dataset.cacheEntries = String(status.entries);
+      player.dispatchEvent(new CustomEvent("stash-tv-buffer", { detail: status }));
+      if (debug) console.info("Stash TV buffer", status);
+    })).then(value => { buffer = value; return value; }).catch(() => null);
+    return bufferSetup;
   }
 
   async function warmNeighbours() {
     const generation = state.generation;
-    for (const direction of [1, -1]) {
+    const items = [];
+    for (const direction of [1, 2, -1, 0]) {
       if (generation !== state.generation || !state.queue) return;
-      const queue = advanceQueue(state.queue, direction);
-      if (queue) await getStill(queue.ids[queue.index]);
+      const index = state.queue.index + direction;
+      if (index < 0 || index >= state.queue.ids.length) continue;
+      try {
+        const scene = await getScene(state.queue.ids[index]);
+        const file = scene.files[0];
+        const original = streamChoices(scene, location.origin, basePath)[0];
+        if (!file || file.format !== "mp4" || !original || original.offset) continue;
+        const source = versionOriginal(scene, original);
+        items.push({ id: scene.id, url: source.url, size: Number(file.size), seconds: checkpoint(scene),
+          signature: [file.id, file.size, file.mod_time].join(":"), current: direction === 0 });
+      } catch { /* An unavailable neighbor must not interrupt the current video. */ }
     }
+    const service = buffer || (items.some(item => !item.current) ? await ensureBuffer() : null);
+    if (!service || generation !== state.generation) return;
+    service.pause(document.hidden || state.buffering || !["ready", "playing", "paused"].includes(state.phase));
+    service.update(items);
   }
 
   function play() {
@@ -771,6 +808,8 @@ async function boot() {
   }
 
   function setSource(index, seconds) {
+    if (readyFrame) video.cancelVideoFrameCallback(readyFrame);
+    readyFrame = 0;
     clearTimeout(state.sourceTimer);
     state.sourceIndex = index;
     const source = state.sources[index];
@@ -781,6 +820,7 @@ async function boot() {
     state.offset = source.offset ? seconds : 0;
     state.resume = source.offset ? 0 : seconds;
     player.dataset.videoReady = "false";
+    player.dataset.frameDecoded = "false";
     state.sourceURL = sourceAt(source, seconds);
     byId("source").value = String(index);
     byId("status").textContent = source.label;
@@ -788,6 +828,7 @@ async function boot() {
     video.pause();
     video.src = state.sourceURL;
     video.load();
+    watchFrame();
     const generation = state.generation;
     state.sourceTimer = setTimeout(function () {
       if (generation === state.generation && state.phase === "loading") {
@@ -801,12 +842,16 @@ async function boot() {
     cancelTouch();
     if (!transition) resetSwipe();
     saveProgress();
-    if (state.scene && !state.fromBeginning && video.readyState >= 2 && video.videoWidth) {
+    if (state.scene && !state.fromBeginning && !video.seeking && !video.ended &&
+        player.dataset.videoReady === "true" && video.readyState >= 2 && video.videoWidth) {
       const snapshot = document.createElement("canvas");
       drawStill(snapshot, video);
-      storeStill(state.scene.id, Promise.resolve(snapshot));
+      snapshot.dataset.position = String(checkpoint(state.scene));
+      storeStill(state.scene.id, checkpoint(state.scene), Promise.resolve(snapshot));
     }
     const generation = ++state.generation;
+    if (readyFrame) video.cancelVideoFrameCallback(readyFrame);
+    readyFrame = 0;
     resetPreview();
     state.startedAt = performance.now();
     clearTimeout(state.sourceTimer);
@@ -821,6 +866,7 @@ async function boot() {
     video.removeAttribute("src");
     video.removeAttribute("poster");
     player.dataset.videoReady = "false";
+    player.dataset.frameDecoded = "false";
     positionVideo(0.5);
     video.load();
     phase("loading", "Loading scene...");
@@ -836,7 +882,7 @@ async function boot() {
       state.scene = scene;
       state.sources = streamChoices(scene, location.origin, basePath).filter(function (source, index) {
         return index === 0 || !source.mime || !!video.canPlayType(source.mime);
-      });
+      }).map(source => versionOriginal(scene, source));
       if (!state.sources.length) throw new Error("No playable stream is available. Choose Next.");
       byId("source").textContent = "";
       state.sources.forEach(function (source, index) {
@@ -850,7 +896,7 @@ async function boot() {
       byId("seek").max = String(file.duration || 1);
       state.markers = sceneMarkers(scene.scene_markers, Number(file.duration));
       renderMarkers();
-      setSource(0, state.fromBeginning ? 0 : Number(scene.resume_time) || 0);
+      setSource(0, checkpoint(scene));
       mark("ready");
       const next = advanceQueue(queue, 1);
       if (next) getScene(next.ids[next.index]).catch(function () {});
@@ -999,6 +1045,7 @@ async function boot() {
     video.load();
     cache.delete(id);
     stills.delete(id);
+    buffer?.update([]);
     let submitted = false;
     try {
       await activity;
@@ -1033,6 +1080,7 @@ async function boot() {
       }
     }
     state.queue = removeCurrentScene(queue);
+    positions.delete(id);
     if (state.queue) {
       state.wantsPlay = true;
       await loadScene();
@@ -1052,6 +1100,40 @@ async function boot() {
   let touch = null;
   let tap = null;
   let touchClickUntil = 0;
+  const wheel = { offset: 0, locked: false, started: false, timer: 0 };
+
+  function endWheel() {
+    clearTimeout(wheel.timer);
+    if (wheel.started) returnSwipe();
+    wheel.offset = 0;
+    wheel.started = false;
+    wheel.locked = false;
+  }
+
+  player.addEventListener("wheel", function (event) {
+    if (event.ctrlKey || Math.abs(event.deltaX) >= Math.abs(event.deltaY) ||
+        event.target.closest(".chrome") || touch || !state.queue || byId("random").disabled) return;
+    event.preventDefault();
+    clearTimeout(wheel.timer);
+    if (wheel.locked) {
+      wheel.timer = setTimeout(endWheel, 180);
+      return;
+    }
+    if (!wheel.started) { startSwipe(); wheel.started = true; }
+    const scale = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? player.clientHeight : 1;
+    wheel.offset -= event.deltaY * scale;
+    moveSwipe(wheel.offset);
+    const threshold = Math.max(80, Math.min(160, player.clientHeight * 0.18));
+    if (Math.abs(wheel.offset) >= threshold) {
+      const direction = wheel.offset < 0 ? 1 : -1;
+      wheel.started = false;
+      wheel.locked = true;
+      navigate(direction, true);
+      wheel.timer = setTimeout(endWheel, 180);
+    } else wheel.timer = setTimeout(endWheel, 180);
+  }, { passive: false });
+  window.addEventListener("blur", endWheel);
+  window.addEventListener("pagehide", endWheel);
 
   function resetSwipe() {
     clearTimeout(swipe.timer);
@@ -1186,6 +1268,31 @@ async function boot() {
 
   function settleSwipe() {
     if (swipe.phase === "loading") resetSwipe();
+  }
+
+  function presentFrame() {
+    if (video.seeking || video.readyState < 2 || state.resume) return;
+    player.dataset.frameDecoded = "true";
+    if (!video.requestVideoFrameCallback) {
+      player.dataset.videoReady = "true";
+      settleSwipe();
+      return;
+    }
+    watchFrame();
+  }
+
+  function watchFrame() {
+    if (!video.requestVideoFrameCallback) return;
+    if (readyFrame) return;
+    const generation = state.generation;
+    readyFrame = video.requestVideoFrameCallback(function (_, metadata) {
+      readyFrame = 0;
+      if (generation !== state.generation || video.currentSrc !== state.sourceURL) return;
+      if (state.resume || Math.abs(metadata.mediaTime - video.currentTime) > 0.15) { watchFrame(); return; }
+      player.dataset.frameDecoded = "true";
+      player.dataset.videoReady = "true";
+      settleSwipe();
+    });
   }
 
   function clearSeekFeedback() {
@@ -1364,7 +1471,16 @@ async function boot() {
   window.addEventListener("blur", cancelTouch);
   window.addEventListener("pagehide", cancelTouch);
   document.addEventListener("visibilitychange", function () {
-    if (document.hidden) cancelTouch();
+    if (document.hidden) { cancelTouch(); endWheel(); }
+    buffer?.pause(document.hidden || state.buffering || !["ready", "playing", "paused"].includes(state.phase));
+    if (!document.hidden) warmNeighbours();
+  });
+  window.addEventListener("pagehide", function (event) {
+    buffer?.pause(true);
+    if (!event.persisted) { buffer?.update([]); buffer?.dispose(); }
+  });
+  window.addEventListener("pageshow", function (event) {
+    if (event.persisted) warmNeighbours();
   });
 
   // Handle touch controls directly; a preceding drag can suppress compatibility clicks.
@@ -1545,6 +1661,9 @@ async function boot() {
   setInterval(function () {
     if (state.phase === "playing") recoverTruncatedStream();
   }, 500);
+  setInterval(function () {
+    if (!document.hidden && !state.buffering && ["ready", "playing", "paused"].includes(state.phase)) warmNeighbours();
+  }, 30000);
   video.addEventListener("loadedmetadata", function () {
     if (!state.scene || video.currentSrc !== state.sourceURL) return;
     if (state.resume) {
@@ -1568,8 +1687,7 @@ async function boot() {
         video.readyState < 2
       )
         return;
-      player.dataset.videoReady = "true";
-      settleSwipe();
+      presentFrame();
       if (state.phase === "loading") warmNeighbours();
       if (state.phase === "loading") {
         if (state.wantsPlay) play();
@@ -1580,7 +1698,7 @@ async function boot() {
   function onPlaying() {
     if (!state.scene || video.currentSrc !== state.sourceURL) return;
     clearTimeout(state.sourceTimer);
-    settleSwipe();
+    presentFrame();
     phase("playing");
     if (!state.playedAt) state.playedAt = performance.now();
     byId("status").textContent =
@@ -1624,7 +1742,7 @@ async function boot() {
     if (!state.scene || video.currentSrc !== state.sourceURL || state.resume ||
         video.paused || video.ended || video.seeking || video.readyState < 2) return;
     if (["loading", "ready", "paused"].includes(state.phase)) {
-      player.dataset.videoReady = "true";
+      presentFrame();
       onPlaying();
     } else if (state.phase === "playing" && state.buffering) setBuffering(false);
   });

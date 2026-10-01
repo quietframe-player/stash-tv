@@ -31,7 +31,9 @@ class PackageTests(unittest.TestCase):
         with zipfile.ZipFile(ROOT / 'dist/stash-tv.zip') as archive:
             self.assertEqual(set(archive.namelist()), {
                 'stash-tv.yml', 'launcher.js', 'web/index.html', 'web/player.js',
-                'web/style.css', 'web/LUCIDE-LICENSE.txt', 'LICENSE', 'README.md'})
+                'web/style.css', 'web/LUCIDE-LICENSE.txt', 'LICENSE', 'README.md',
+                'web/buffering.js', 'web/prepare-worker.js', 'web/media-worker.js',
+                'web/mp4box-parser.js', 'web/MP4BOX-LICENSE.txt'})
             for name in archive.namelist():
                 body = archive.read(name).decode()
                 for private in ['PRIVATE KEY', 'ghp_', 'github_pat_']:

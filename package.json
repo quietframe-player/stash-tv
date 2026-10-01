@@ -1,7 +1,7 @@
 {
   "name": "stash-tv",
-  "version": "0.3.3",
-  "releaseDate": "2026-09-30",
+  "version": "0.4.0",
+  "releaseDate": "2026-10-01",
   "private": true,
   "type": "module",
   "scripts": {
