@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="referrer" content="same-origin" />
     <title>Stash TV</title>
-    <link rel="stylesheet" href="./style.css?v=0.5.0" />
-    <script type="module" src="./player.js?v=0.5.0"></script>
+    <link rel="stylesheet" href="./style.css?v=0.5.1" />
+    <script type="module" src="./player.js?v=0.5.1"></script>
   </head>
   <body>
     <main id="player" tabindex="-1" aria-label="Stash TV player" data-phase="loading">
@@ -16,6 +16,11 @@
           <canvas id="swipe-incoming" hidden aria-hidden="true"></canvas>
           <canvas id="swipe-outgoing" hidden aria-hidden="true"></canvas>
         </div>
+      </div>
+      <div hidden aria-hidden="true">
+        <svg class="icon icon-ellipsis" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" /><circle cx="5" cy="12" r="1" />
+        </svg>
       </div>
       <button id="surface" type="button" aria-label="Play video"></button>
       <span id="gesture-feedback" hidden aria-live="polite">2×</span>

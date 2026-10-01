@@ -33,7 +33,7 @@ class PackageTests(unittest.TestCase):
                 'stash-tv.yml', 'launcher.js', 'web/index.html', 'web/player.js',
                 'web/style.css', 'web/LUCIDE-LICENSE.txt', 'LICENSE', 'README.md',
                 'web/buffering.js', 'web/prepare-worker.js', 'web/media-worker.js',
-                'web/mp4box-parser.js', 'web/MP4BOX-LICENSE.txt', 'web/multiview.js'})
+                'web/mp4box-parser.js', 'web/MP4BOX-LICENSE.txt', 'web/multiview.js', 'web/tile-controls.js', 'web/frame-fill.js'})
             for name in archive.namelist():
                 body = archive.read(name).decode()
                 for private in ['PRIVATE KEY', 'ghp_', 'github_pat_']:
