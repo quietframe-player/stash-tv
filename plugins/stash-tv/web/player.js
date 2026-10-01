@@ -698,9 +698,9 @@ async function boot() {
     const query =
       "query TVScene($id:ID!){findScene(id:$id){id resume_time paths{stream vtt screenshot} sceneStreams{url mime_type label} files{id size duration format mod_time} scene_markers{id title seconds end_seconds primary_tag{name}}}}";
     const promise = api(query, { id: id })
-      .then(function (data) {
+      .then(async function (data) {
         if (!data.findScene) throw new Error("This scene is no longer in Stash. Choose Next.");
-        return data.findScene;
+        return { ...data.findScene, sources: await playbackSources(data.findScene) };
       })
       .catch(function (error) {
         cache.delete(id);
@@ -732,6 +732,38 @@ async function boot() {
     const url = new URL(source.url);
     url.searchParams.set("stash_tv_file", [file.id, file.size, file.mod_time].join(":"));
     return { ...source, url: url.href };
+  }
+
+  async function playbackSources(scene) {
+    const sources = streamChoices(scene, location.origin, basePath).filter(function (source, index) {
+      return index === 0 || !source.mime || !!video.canPlayType(source.mime);
+    }).map(source => versionOriginal(scene, source));
+    const webkit = /AppleWebKit/.test(navigator.userAgent) && !/Chrome|Chromium|Edg|OPR/.test(navigator.userAgent);
+    const original = sources[0];
+    if (!webkit || video.canPlayType("video/x-matroska") || scene.files[0]?.format !== "matroska" ||
+        !original) return sources;
+    const compatible = sources.filter(source => !new URL(source.url).pathname.endsWith(".mkv"));
+    const fallback = compatible.filter(source => source !== original);
+    const segmented = fallback.filter(source => new URL(source.url).pathname.endsWith(".m3u8"));
+    const ordered = segmented.concat(fallback.filter(source => !segmented.includes(source)));
+    const path = new URL(original.url).pathname;
+    if (path.endsWith(".mkv")) return ordered.length ? ordered : sources;
+    if (original.offset || !path.endsWith("/stream")) return sources;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 1000);
+    try {
+      const response = await fetch(original.url, { headers: { Range: "bytes=0-15" },
+        credentials: "same-origin", signal: controller.signal });
+      if (response.status !== 206 || !/^bytes 0-(?:[0-9]|1[0-5])\//.test(response.headers.get("Content-Range") || "")) {
+        await response.body?.cancel();
+        return sources;
+      }
+      // The direct endpoint can contain a stored MP4 even when the original file is Matroska.
+      const header = new Uint8Array(await response.arrayBuffer());
+      if (header[0] !== 0x1a || header[1] !== 0x45 || header[2] !== 0xdf || header[3] !== 0xa3) return sources;
+      return ordered.length ? ordered : sources;
+    } catch { return sources; }
+    finally { clearTimeout(timer); }
   }
 
   function storeStill(id, seconds, promise) {
@@ -772,21 +804,21 @@ async function boot() {
 
   async function warmNeighbours() {
     const generation = state.generation;
-    const items = [];
-    for (const direction of [1, 2, -1, 0]) {
-      if (generation !== state.generation || !state.queue) return;
-      const index = state.queue.index + direction;
-      if (index < 0 || index >= state.queue.ids.length) continue;
+    const queue = state.queue;
+    if (!queue) return;
+    const items = (await Promise.all([1, 2, -1, 0].map(async direction => {
+      const index = queue.index + direction;
+      if (index < 0 || index >= queue.ids.length) return null;
       try {
-        const scene = await getScene(state.queue.ids[index]);
+        const scene = await getScene(queue.ids[index]);
         const file = scene.files[0];
-        const original = streamChoices(scene, location.origin, basePath)[0];
-        if (!file || file.format !== "mp4" || !original || original.offset) continue;
-        const source = versionOriginal(scene, original);
-        items.push({ id: scene.id, url: source.url, size: Number(file.size), seconds: checkpoint(scene),
-          signature: [file.id, file.size, file.mod_time].join(":"), current: direction === 0 });
-      } catch { /* An unavailable neighbor must not interrupt the current video. */ }
-    }
+        const source = scene.sources[0];
+        if (!file || file.format !== "mp4" || !source || source.offset) return null;
+        return { id: scene.id, url: source.url, size: Number(file.size), seconds: checkpoint(scene),
+          signature: [file.id, file.size, file.mod_time].join(":"), current: direction === 0 };
+      } catch { return null; }
+    }))).filter(Boolean);
+    if (generation !== state.generation) return;
     const service = buffer || (items.some(item => !item.current) ? await ensureBuffer() : null);
     if (!service || generation !== state.generation) return;
     service.pause(document.hidden || state.buffering || !["ready", "playing", "paused"].includes(state.phase));
@@ -880,9 +912,7 @@ async function boot() {
       const scene = await getScene(id);
       if (generation !== state.generation) return;
       state.scene = scene;
-      state.sources = streamChoices(scene, location.origin, basePath).filter(function (source, index) {
-        return index === 0 || !source.mime || !!video.canPlayType(source.mime);
-      }).map(source => versionOriginal(scene, source));
+      state.sources = scene.sources;
       if (!state.sources.length) throw new Error("No playable stream is available. Choose Next.");
       byId("source").textContent = "";
       state.sources.forEach(function (source, index) {
@@ -897,9 +927,8 @@ async function boot() {
       state.markers = sceneMarkers(scene.scene_markers, Number(file.duration));
       renderMarkers();
       setSource(0, checkpoint(scene));
+      warmNeighbours();
       mark("ready");
-      const next = advanceQueue(queue, 1);
-      if (next) getScene(next.ids[next.index]).catch(function () {});
       params.set("scene", id);
       params.set("seed", String(state.seed));
       history.replaceState(null, "", location.pathname + "?" + params.toString());
@@ -992,12 +1021,19 @@ async function boot() {
       showPreview(target);
       scrub.hideTimer = setTimeout(hidePreview, 1500);
     } else hidePreview();
-    if (state.sources[state.sourceIndex].offset) {
+    const source = state.sources[state.sourceIndex];
+    const relative = target - state.offset;
+    const buffered = [video.buffered, video.seekable].every(function (ranges) {
+      for (let i = 0; i < ranges.length; i++)
+        if (relative >= ranges.start(i) && relative < ranges.end(i)) return true;
+      return false;
+    });
+    if (source.offset && !buffered) {
       saveProgress();
       setSource(state.sourceIndex, target);
-    } else if (video.currentTime !== target) {
+    } else if (video.currentTime !== relative) {
       setBuffering(true);
-      video.currentTime = target;
+      video.currentTime = relative;
     }
     byId("seek").value = String(target);
     paintSeek();

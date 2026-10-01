@@ -94,6 +94,16 @@ Other containers, oversized indexes, unsupported codecs, and browsers without se
 workers keep normal playback. Preparation never starts neighboring transcodes or
 changes video quality. Buffering requires HTTPS or localhost. There remains one
 native video element and at most four cached stills.
+Neighbor metadata loads concurrently with the current video. Media preparation still
+yields to playback and seeking. Converted streams reuse their buffered, seekable
+window instead of restarting conversion for every jump. A position outside that
+window starts a new stream at the exact requested time.
+
+On WebKit, an unsupported Matroska source is detected with a bounded sixteen-byte
+header request. A stored MP4 keeps native playback. Raw Matroska uses Stash's
+highest available compatible stream, preferring native HLS when supported for
+segmented seeking. Original sources stay the default in other browsers. Cold
+conversion speed still depends on the Stash server's CPU and streaming settings.
 With Reduce Motion enabled, dragging still follows your finger and release uses
 a short fade instead of a slide.
 
