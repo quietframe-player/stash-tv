@@ -508,14 +508,14 @@ button {
 .icon-pause,
 .icon-rotate-ccw,
 .icon-minimize,
-#player[data-phase="playing"] .icon-play,
-#player[data-phase="error"] .icon-play,
-#player[data-fullscreen="true"] .icon-maximize {
+#player[data-phase="playing"] #toggle .icon-play,
+#player[data-phase="error"] #toggle .icon-play,
+#player[data-fullscreen="true"] #fullscreen .icon-maximize {
   display: none;
 }
-#player[data-phase="playing"] .icon-pause,
-#player[data-phase="error"] .icon-rotate-ccw,
-#player[data-fullscreen="true"] .icon-minimize {
+#player[data-phase="playing"] #toggle .icon-pause,
+#player[data-phase="error"] #toggle .icon-rotate-ccw,
+#player[data-fullscreen="true"] #fullscreen .icon-minimize {
   display: block;
 }
 .icon-loader-circle {

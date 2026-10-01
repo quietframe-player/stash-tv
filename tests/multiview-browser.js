@@ -42,13 +42,17 @@ export default async function verifyMultiview(page, options) {
       return { root: rect(root), gap: getComputedStyle(root).gap,
         views: [...root.children].map(view => ({ ...rect(view), border: getComputedStyle(view).borderWidth,
           fit: getComputedStyle(view.querySelector("video")).objectFit })),
-        icons: [...document.querySelectorAll(".tile-controls .icon, .multiview-toolbar .icon")].filter(node => node.getClientRects().length).map(node => node.getBoundingClientRect().width) };
+        icons: [...document.querySelectorAll(".tile-controls .icon, .multiview-toolbar .icon")].filter(node => node.getClientRects().length).map(node => {
+          const style = getComputedStyle(node); return {width: parseFloat(style.width), height: parseFloat(style.height)};
+        }),
+        iconCounts: [...document.querySelectorAll(".tile-nav button")].map(button => [...button.querySelectorAll(".icon")].filter(icon => getComputedStyle(icon).display !== "none").length) };
     });
     const area = value.views.reduce((total, view) => total + view.width * view.height, 0);
     check(value.views.length === count && Math.abs(area - value.root.width * value.root.height) < 1 && value.gap === "0px",
       "Grid has gaps: " + JSON.stringify(value));
     check(value.views.every(view => view.border === "0px" && view.fit === "cover"), "Tiles have borders or letterboxing");
-    check(value.icons.every(width => width === 24), "Icon sizes changed");
+    check(value.icons.every(icon => icon.width === 24 && icon.height === 24) && value.iconCounts.every(count => count === 1),
+      "Icon sizes or states changed: " + JSON.stringify({icons:value.icons,counts:value.iconCounts}));
     return value;
   };
   try {
@@ -289,7 +293,7 @@ export default async function verifyMultiview(page, options) {
       const bounds = await page.evaluate(() => [...document.querySelectorAll(".tile-nav button")].map(button => {
         const b = button.getBoundingClientRect(), r = button.closest(".view").getBoundingClientRect();
         return { inside: b.x >= r.x && b.right <= r.right && b.y >= r.y && b.bottom <= r.bottom,
-          icons: [...button.querySelectorAll(".icon")].filter(icon => getComputedStyle(icon).display !== "none").map(icon => icon.getBoundingClientRect().width) };
+          icons: [...button.querySelectorAll(".icon")].filter(icon => getComputedStyle(icon).display !== "none").map(icon => parseFloat(getComputedStyle(icon).width)) };
       }));
       check(bounds.length === 24 && bounds.every(b => b.inside && b.icons.length === 1 && b.icons[0] === 24), "Portrait tile buttons or icons overlap their video");
       await page.screenshot({ path: options.reportDir + "/" + options.browser + "-multiview-mobile-controls.png" });
