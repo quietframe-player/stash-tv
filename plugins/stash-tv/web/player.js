@@ -744,8 +744,11 @@ async function boot() {
         !original) return sources;
     const compatible = sources.filter(source => !new URL(source.url).pathname.endsWith(".mkv"));
     const fallback = compatible.filter(source => source !== original);
+    const webm = video.canPlayType('video/webm; codecs="vp9,opus"') ?
+      fallback.filter(source => new URL(source.url).pathname.endsWith(".webm")) : [];
     const segmented = fallback.filter(source => new URL(source.url).pathname.endsWith(".m3u8"));
-    const ordered = segmented.concat(fallback.filter(source => !segmented.includes(source)));
+    const preferred = webm.concat(segmented);
+    const ordered = preferred.concat(fallback.filter(source => !preferred.includes(source)));
     const path = new URL(original.url).pathname;
     if (path.endsWith(".mkv")) return ordered.length ? ordered : sources;
     if (original.offset || !path.endsWith("/stream")) return sources;
@@ -1309,7 +1312,9 @@ async function boot() {
   function presentFrame() {
     if (video.seeking || video.readyState < 2 || state.resume) return;
     player.dataset.frameDecoded = "true";
-    if (!video.requestVideoFrameCallback) {
+    if (video.paused || !video.requestVideoFrameCallback) {
+      if (readyFrame) video.cancelVideoFrameCallback(readyFrame);
+      readyFrame = 0;
       player.dataset.videoReady = "true";
       settleSwipe();
       return;

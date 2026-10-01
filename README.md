@@ -101,9 +101,11 @@ window starts a new stream at the exact requested time.
 
 On WebKit, an unsupported Matroska source is detected with a bounded sixteen-byte
 header request. A stored MP4 keeps native playback. Raw Matroska uses Stash's
-highest available compatible stream, preferring native HLS when supported for
-segmented seeking. Original sources stay the default in other browsers. Cold
+highest available compatible stream, preferring supported VP9/Opus WebM for fast
+startup, then native HLS. Original sources stay the default in other browsers. Cold
 conversion speed still depends on the Stash server's CPU and streaming settings.
+Paused playback becomes ready once the browser has decoded the target position;
+it does not wait for a presentation callback that a paused stream may never emit.
 With Reduce Motion enabled, dragging still follows your finger and release uses
 a short fade instead of a slide.
 

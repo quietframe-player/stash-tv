@@ -128,6 +128,25 @@ export default async function verifyLatency(page, options) {
         results.push({ name: "stored MP4 remains native when original file metadata says Matroska", passed: true });
       } finally { await context.close(); }
     }
+    const pausedContext = await page.context().browser().newContext({ serviceWorkers: "block" });
+    try {
+      const paused = await pausedContext.newPage();
+      await paused.addInitScript(() => {
+        const request = HTMLVideoElement.prototype.requestVideoFrameCallback;
+        if (request) HTMLVideoElement.prototype.requestVideoFrameCallback = function (callback) {
+          return request.call(this, (now, frame) => { if (!this.paused) callback(now, frame); });
+        };
+      });
+      await paused.goto(options.baseURL + "/plugin/stash-tv/assets/index.html?autoplay=false&scene=" + id);
+      await paused.waitForFunction(() => document.getElementById("player").dataset.videoReady === "true");
+      await paused.locator("#seek").evaluate(range => { range.value = "12.3"; range.dispatchEvent(new Event("change", { bubbles: true })); });
+      await paused.waitForFunction(() => {
+        const video = document.getElementById("video");
+        return video.paused && !video.seeking && video.readyState >= 2 && Math.abs(video.currentTime - 12.3) < 0.15;
+      });
+      check(await paused.locator("#player").getAttribute("data-video-ready") === "true", "Paused playback waited for an unavailable presentation callback");
+      results.push({ name: "paused decoded playback remains ready without presentation callbacks", passed: true });
+    } finally { await pausedContext.close(); }
     check(errors.length === 0, errors.join("; "));
     return { passed: true, browser: options.browser, results, errors };
   } catch (error) {
