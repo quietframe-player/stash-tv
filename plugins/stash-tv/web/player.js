@@ -839,7 +839,6 @@ async function boot() {
 
   function play() {
     state.wantsPlay = true;
-    multiview?.setPlaying(true);
     if (!state.scene || !state.sourceURL || state.resume)
       return;
     const generation = state.generation;
@@ -847,7 +846,6 @@ async function boot() {
       if (generation !== state.generation || error.name === "AbortError") return;
       if (error.name === "NotAllowedError") {
         state.wantsPlay = false;
-        multiview?.setPlaying(false);
         presentFrame();
         phase("ready", "Press Play to start.");
         showControls();
@@ -924,7 +922,6 @@ async function boot() {
     const available = new Set(queue.ids).size;
     if (state.layout > available) setLayout(available >= 2 ? 2 : 1);
     multiview?.primaryChanged(id);
-    multiview?.setPlaying(state.wantsPlay);
     byId("previous").disabled = queue.index === 0;
     byId("next").disabled = queue.index === queue.ids.length - 1;
     byId("notice").textContent = "";
@@ -1006,19 +1003,19 @@ async function boot() {
     loadScene(transition);
   }
 
-  function random() {
+  function random(all = true) {
     if (!state.queue || byId("random").disabled) return;
     const queue = randomQueue(state.queue, Math.random());
     if (!queue) return;
     state.queue = queue;
     state.wantsPlay = true;
-    multiview?.shuffle();
-    multiview?.setPlaying(true);
+    if (all) { multiview?.shuffle(); multiview?.setPlaying(true); }
     loadScene();
     byId("surface").focus();
   }
 
   function toggle() {
+    if (state.layout > 1 && multiview) { multiview.toggleAll(); return; }
     if (byId("toggle").disabled) return;
     if (state.phase === "error") {
       state.wantsPlay = true;
@@ -1060,6 +1057,29 @@ async function boot() {
       multiviewSetup = import(url.href).then(module => {
         multiview = module.createMultiview({
           root: byId("views"),
+          layoutButtons: [byId("layout-two"), byId("layout-four"), byId("fullscreen")],
+          controls: {
+            timeLabel, keyAction: remoteAction,
+            icon: name => player.querySelector(".icon-" + name).cloneNode(true),
+            notice: message => { byId("notice").textContent = message; },
+          },
+          primaryController: {
+            node: byId("primary-view"), video,
+            snapshot: () => ({
+              time: currentTime(), duration: Number(state.scene?.files[0]?.duration) || 0,
+              loading: state.phase === "loading" || state.buffering,
+              error: state.phase === "error", unavailable: !state.scene,
+              previous: state.queue.index > 0, next: state.queue.index < state.queue.ids.length - 1,
+            }),
+            setPlaying(value) {
+              state.wantsPlay = value;
+              if (value && state.phase === "error") loadScene();
+              else if (value) play();
+              else video.pause();
+            },
+            seek: seconds => seek(seconds, false), navigate,
+            random: () => random(false),
+          },
           ids: () => state.queue.ids,
           primary: () => state.queue.ids[state.queue.index],
           getScene, checkpoint, sourceAt, truncatedWebmFallback,
@@ -1849,7 +1869,6 @@ async function boot() {
   video.addEventListener("pause", function () {
     if (touch && touch.phase === "holding") cancelTouch();
     if (!state.wantsPlay && state.scene && video.currentSrc === state.sourceURL) presentFrame();
-    if (!state.wantsPlay) multiview?.setPlaying(false);
     if (state.phase !== "playing") return;
     saveProgress();
     phase("paused", "Paused");
@@ -1916,6 +1935,8 @@ async function boot() {
       event.metaKey ||
       event.altKey ||
       event.target.isContentEditable ||
+      event.target.closest(".tile-controls, .tile-surface, .multiview-toolbar") &&
+        ![byId("layout-two"), byId("layout-four"), byId("fullscreen")].includes(event.target) ||
       ["SELECT", "TEXTAREA"].includes(event.target.tagName) ||
       (event.target.tagName === "INPUT" && event.target.type !== "range")
     )

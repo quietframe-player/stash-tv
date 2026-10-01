@@ -42,7 +42,7 @@ export default async function verifyMultiview(page, options) {
       return { root: rect(root), gap: getComputedStyle(root).gap,
         views: [...root.children].map(view => ({ ...rect(view), border: getComputedStyle(view).borderWidth,
           fit: getComputedStyle(view.querySelector("video")).objectFit })),
-        icons: [...document.querySelectorAll("nav .icon")].filter(node => node.getClientRects().length).map(node => node.getBoundingClientRect().width) };
+        icons: [...document.querySelectorAll(".tile-controls .icon, .multiview-toolbar .icon")].filter(node => node.getClientRects().length).map(node => node.getBoundingClientRect().width) };
     });
     const area = value.views.reduce((total, view) => total + view.width * view.height, 0);
     check(value.views.length === count && Math.abs(area - value.root.width * value.root.height) < 1 && value.gap === "0px",
@@ -76,31 +76,122 @@ export default async function verifyMultiview(page, options) {
     await page.screenshot({ path: options.reportDir + "/" + options.browser + "-multiview-four.png" });
     results.push({ name: "four distinct scenes decode and advance together without restarting the first two", passed: true, videos: four });
 
-    await click("#toggle");
+    await click(".multiview-toggle");
     await page.waitForFunction(() => [...document.querySelectorAll("#views video")].every(video => video.paused));
     const paused = await sample();
     await page.waitForTimeout(400);
     const still = await sample();
     check(still.every((video, index) => Math.abs(video.time - paused[index].time) < 0.1), "Shared pause left a tile playing");
-    await page.locator("#seek").evaluate(range => { range.value = "15"; range.dispatchEvent(new Event("change", { bubbles: true })); });
+    await page.locator("#primary-view .tile-seek").evaluate(range => { range.value = "15"; range.dispatchEvent(new Event("change", { bubbles: true })); });
     await page.waitForFunction(() => !document.getElementById("video").seeking && Math.abs(document.getElementById("video").currentTime - 15) < 0.2);
     check((await sample()).every(video => video.paused), "Seeking the primary resumed an auxiliary tile");
-    await click("#surface");
+    await click(".multiview-toggle");
     await progressing(4);
-    results.push({ name: "shared pause and surface resume affect every tile; seeking stays on the primary video", passed: true });
+    results.push({ name: "explicit group pause and resume affect every tile; independent seeking does not resume paused tiles", passed: true });
 
-    await click("#random");
+    await click("#primary-view .tile-random");
     const shuffled = await progressing(4);
     check(shuffled[0].id !== four[0].id, "Random did not change the primary scene");
-    results.push({ name: "Random refreshes the grid with distinct scene IDs", passed: true, videos: shuffled });
+    results.push({ name: "primary Random changes only its own tile and preserves distinct scene IDs", passed: true, videos: shuffled });
 
-    await click("#previous");
+    await click("#primary-view .tile-previous");
     const previous = await progressing(4);
     check(previous[0].id === four[0].id, "Previous did not return through shuffled history");
-    await click("#next");
+    await click("#primary-view .tile-next");
     const navigated = await progressing(4);
     check(navigated[0].id === shuffled[0].id, "Next did not return to the shuffled primary scene");
     results.push({ name: "primary navigation preserves shuffled history and replaces colliding auxiliary scenes", passed: true });
+
+    const tile = index => page.locator("#views > .view").nth(index);
+    const tileClick = async (index, action) => {
+      await tile(index).locator(".tile-surface").hover({ position: { x: 20, y: 20 } });
+      await tile(index).locator(".tile-" + action).click();
+    };
+    for (let index = 0; index < 4; index++) {
+      const before = await sample();
+      await tileClick(index, "toggle");
+      await page.waitForTimeout(350);
+      const after = await sample();
+      check(after[index].paused && after.every((video, other) => other === index || !video.paused && video.time > before[other].time),
+        "Tile pause affected a different video: " + JSON.stringify({ index, before, after }));
+      await tileClick(index, "toggle");
+      await progressing(4);
+    }
+    results.push({ name: "each of the four play/pause buttons affects only its own real video", passed: true });
+
+    await click(".multiview-toggle");
+    await page.waitForFunction(() => [...document.querySelectorAll("#views video")].every(video => video.paused));
+    for (let index = 0; index < 4; index++) {
+      for (const percent of [0.3, 0.6, 0.15]) {
+        const before = await sample();
+        const range = tile(index).locator(".tile-seek");
+        await tile(index).locator(".tile-surface").hover({ position: { x: 20, y: 20 } });
+        const box = await range.boundingBox();
+        await page.mouse.move(box.x + box.width * 0.2, box.y + box.height / 2);
+        await page.mouse.down();
+        await page.mouse.move(box.x + box.width * percent, box.y + box.height / 2, { steps: 6 });
+        await page.mouse.up();
+        const target = await range.evaluate((input, percent) => Number(input.max) * percent, percent);
+        await page.waitForFunction(({ index, target }) => {
+          const video = document.querySelectorAll("#views video")[index];
+          return !video.seeking && Math.abs(video.currentTime - target) < 0.5;
+        }, { index, target });
+        const after = await sample();
+        check(after.every((video, other) => video.paused && (other === index || Math.abs(video.time - before[other].time) < 0.1)),
+          "Dragging one seek bar changed another video or resumed playback");
+      }
+    }
+    results.push({ name: "three consecutive real pointer drags on each timeline seek independently and preserve pause", passed: true });
+    const keyboardBefore = await sample();
+    await tile(2).locator(".tile-surface").focus();
+    await page.keyboard.press("d");
+    await page.waitForFunction(time => Math.abs(document.querySelectorAll("#views video")[2].currentTime - time - 10) < 0.5, keyboardBefore[2].time);
+    await page.keyboard.press("a");
+    await page.waitForFunction(time => Math.abs(document.querySelectorAll("#views video")[2].currentTime - time) < 0.5, keyboardBefore[2].time);
+    const keyboardAfter = await sample();
+    check(keyboardAfter.every((video, index) => video.paused && Math.abs(video.time - keyboardBefore[index].time) < 0.5), "Keyboard seeking affected another tile");
+    await page.keyboard.press("Space");
+    await page.waitForTimeout(200);
+    check((await sample()).every((video, index) => video.paused === (index !== 2)), "Keyboard pause/play did not target focused tile");
+    await page.keyboard.press("Space");
+    results.push({ name: "keyboard seek and pause/play follow the focused tile without leaking to the primary", passed: true });
+
+    await tileClick(2, "audio");
+    await tile(2).locator(".tile-volume").evaluate(input => { input.value = "0.4"; input.dispatchEvent(new Event("input", { bubbles: true })); });
+    const audio = await page.evaluate(() => [...document.querySelectorAll("#views video")].map(video => ({ muted: video.muted, volume: video.volume })));
+    check(audio[2].muted === false && Math.abs(audio[2].volume - 0.4) < 0.01 && audio.every((v, i) => i === 2 || v.muted), "Audio selection did not follow the third tile");
+    await tileClick(2, "audio");
+    await tileClick(0, "audio");
+    await tileClick(0, "audio");
+    results.push({ name: "tile volume buttons select one audio source and adjust that video's volume", passed: true });
+
+    await tileClick(3, "fullscreen");
+    const full = await page.evaluate(() => (document.fullscreenElement || document.webkitFullscreenElement)?.classList.contains("extra-view"));
+    if (full) {
+      await tileClick(3, "fullscreen");
+      await page.waitForFunction(() => !document.fullscreenElement && !document.webkitFullscreenElement);
+      check((await sample()).length === 4, "Exiting tile fullscreen lost the grid");
+      results.push({ name: "a selected auxiliary video enters and exits real fullscreen without losing the grid", passed: true });
+    } else {
+      await tile(3).locator("video").evaluate(video => { video.webkitEnterFullscreen = () => { video.dataset.nativeFullscreenRequested = "true"; }; });
+      await tileClick(3, "fullscreen");
+      check(await tile(3).locator("video").getAttribute("data-native-fullscreen-requested") === "true", "Native fullscreen fallback targeted the wrong video");
+      results.push({ name: "native-only fullscreen fallback calls the selected video's WebKit API", passed: true });
+    }
+    await click(".multiview-toggle");
+    await progressing(4);
+    const beforeRandom = await sample();
+    await tileClick(1, "random");
+    await progressing(4);
+    const afterRandom = await sample();
+    check(afterRandom[1].id !== beforeRandom[1].id && afterRandom.every((video, index) => index === 1 || video.id === beforeRandom[index].id), "Random changed another tile");
+    await tileClick(1, "previous");
+    await progressing(4);
+    check((await sample())[1].id === beforeRandom[1].id, "Auxiliary Previous lost its own random history");
+    await tileClick(1, "next");
+    await progressing(4);
+    check((await sample())[1].id === afterRandom[1].id, "Auxiliary Next lost its own random history");
+    results.push({ name: "auxiliary Random, Previous and Next have independent playback history", passed: true });
 
     const ending = (await sample())[1].id;
     await page.locator(".extra-view video").first().evaluate(video => { video.currentTime = Math.max(0, video.duration - 0.1); });
@@ -116,7 +207,7 @@ export default async function verifyMultiview(page, options) {
     check(portrait.views[0].bottom === portrait.views[1].y && portrait.views[0].x === portrait.views[1].x, "Two portrait videos do not stack seamlessly");
     for (const width of [320, 390, 430]) {
       await page.setViewportSize({ width, height: 844 });
-      const controls = await page.evaluate(() => [...document.querySelectorAll("nav > button,nav > .volume-controls")].filter(node => node.getClientRects().length).map(node => {
+      const controls = await page.evaluate(() => [...document.querySelectorAll(".tile-controls .tile-nav > button,.multiview-toolbar > button")].filter(node => node.getClientRects().length).map(node => {
         const r = node.getBoundingClientRect(); return { x: r.x, y: r.y, right: r.right, bottom: r.bottom };
       }));
       check(controls.every(rect => rect.x >= 0 && rect.right <= width && rect.bottom <= 844), "Portrait toolbar overflow");
@@ -180,6 +271,29 @@ export default async function verifyMultiview(page, options) {
       await page.locator("#layout-four").tap();
       await progressing(4);
       await layout(4);
+      for (let index = 0; index < 4; index++) {
+        const view = page.locator("#views > .view").nth(index);
+        await view.locator(".tile-surface").tap();
+        const paused = await sample();
+        check(paused[index].paused && paused.every((video, other) => other === index || !video.paused), "Touch surface paused another tile");
+        for (const percent of [0.25, 0.65]) {
+          const box = await view.locator(".tile-seek").boundingBox();
+          await page.touchscreen.tap(box.x + box.width * percent, box.y + box.height / 2);
+          const target = await view.locator(".tile-seek").evaluate((input, percent) => Number(input.max) * percent, percent);
+          await page.waitForFunction(({index,target}) => Math.abs(document.querySelectorAll("#views video")[index].currentTime - target) < 0.5, {index,target});
+          check((await sample())[index].paused, "Touch seeking resumed a paused tile");
+        }
+        await view.locator(".tile-toggle").tap();
+        await progressing(4);
+      }
+      const bounds = await page.evaluate(() => [...document.querySelectorAll(".tile-nav button")].map(button => {
+        const b = button.getBoundingClientRect(), r = button.closest(".view").getBoundingClientRect();
+        return { inside: b.x >= r.x && b.right <= r.right && b.y >= r.y && b.bottom <= r.bottom,
+          icons: [...button.querySelectorAll(".icon")].filter(icon => getComputedStyle(icon).display !== "none").map(icon => icon.getBoundingClientRect().width) };
+      }));
+      check(bounds.length === 24 && bounds.every(b => b.inside && b.icons.length === 1 && b.icons[0] === 24), "Portrait tile buttons or icons overlap their video");
+      await page.screenshot({ path: options.reportDir + "/" + options.browser + "-multiview-mobile-controls.png" });
+      results.push({ name: "portrait touch surfaces, repeated seeking and playback controls work independently on all four videos", passed: true });
       await page.locator("#layout-four").tap();
       await page.waitForFunction(() => document.querySelectorAll("#views video").length === 1);
       results.push({ name: "touch buttons start and exit four simultaneous videos in a portrait mobile browser", passed: true });
