@@ -141,8 +141,8 @@ export function remoteAction(event) {
     ArrowRight: "forward",
     Enter: "fullscreen",
     " ": "toggle",
-    ArrowUp: "controls",
-    ArrowDown: "controls",
+    ArrowUp: { type: "navigate", direction: 1 },
+    ArrowDown: { type: "navigate", direction: -1 },
     Delete: "delete",
   };
   const codes = {
@@ -154,8 +154,8 @@ export function remoteAction(event) {
     39: "forward",
     13: "fullscreen",
     32: "toggle",
-    38: "controls",
-    40: "controls",
+    38: keys.ArrowUp,
+    40: keys.ArrowDown,
     46: "delete",
   };
   return keys[event.key] || codes[event.keyCode] || null;
@@ -236,6 +236,7 @@ async function boot() {
   const baseURL = new URL(basePath, location.origin);
   const debug = params.get("debug") === "1";
   const cache = new Map();
+  const stills = new Map();
   const scrub = {
     exactTime: null,
     status: "idle",
@@ -275,8 +276,8 @@ async function boot() {
     seekTimer: 0,
   };
   let activity = Promise.resolve();
-  const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
-  const swipe = { phase: "idle", direction: 0, origin: 0, offset: 0, backdropOffset: 0, height: 0, timer: 0, frame: 0 };
+  const reducedMotion = function () { return matchMedia("(prefers-reduced-motion: reduce)").matches; };
+  const swipe = { phase: "idle", direction: 0, origin: 0, offset: 0, backdropOffset: 0, height: 0, target: null, generation: 0, timer: 0, frame: 0 };
   const seekFeedback = { side: 0, seconds: 0, until: 0, timer: 0, pulseTimer: 0 };
 
   async function api(query, variables, keepalive, timeout) {
@@ -684,7 +685,7 @@ async function boot() {
   function getScene(id) {
     if (cache.has(id)) return cache.get(id);
     const query =
-      "query TVScene($id:ID!){findScene(id:$id){id resume_time paths{stream vtt} sceneStreams{url mime_type label} files{duration} scene_markers{id title seconds end_seconds primary_tag{name}}}}";
+      "query TVScene($id:ID!){findScene(id:$id){id resume_time paths{stream vtt screenshot} sceneStreams{url mime_type label} files{duration} scene_markers{id title seconds end_seconds primary_tag{name}}}}";
     const promise = api(query, { id: id })
       .then(function (data) {
         if (!data.findScene) throw new Error("This scene is no longer in Stash. Choose Next.");
@@ -697,6 +698,61 @@ async function boot() {
     cache.set(id, promise);
     while (cache.size > 3) cache.delete(cache.keys().next().value);
     return promise;
+  }
+
+  function drawStill(canvas, source, cue) {
+    const width = cue ? cue.width : source.videoWidth || source.width;
+    const height = cue ? cue.height : source.videoHeight || source.height;
+    canvas.width = Math.min(1280, width);
+    canvas.height = Math.round(canvas.width * height / width);
+    canvas.getContext("2d").drawImage(source, cue ? cue.x : 0, cue ? cue.y : 0,
+      width, height, 0, 0, canvas.width, canvas.height);
+  }
+
+  function storeStill(id, promise) {
+    stills.set(id, promise);
+    while (stills.size > 3) stills.delete(stills.keys().next().value);
+    return promise;
+  }
+
+  function getStill(id) {
+    if (stills.has(id)) return stills.get(id);
+    return storeStill(id, getScene(id).then(async function (scene) {
+      const seconds = state.fromBeginning ? 0 : Number(scene.resume_time) || 0;
+      let cue = null;
+      if (scene.paths.vtt) {
+        const url = new URL(scene.paths.vtt, location.origin);
+        if (url.origin !== location.origin) return null;
+        const controller = new AbortController();
+        const timer = setTimeout(function () { controller.abort(); }, 10000);
+        try {
+          const response = await fetch(url.href, { signal: controller.signal, credentials: "same-origin" });
+          if (response.ok) cue = previewAt(previewCues(await response.text(), url.href, location.origin), seconds);
+        } finally { clearTimeout(timer); }
+      }
+      if (!cue && (seconds > 0 || !scene.paths.screenshot)) return null;
+      const url = new URL(cue ? cue.url : scene.paths.screenshot, location.origin);
+      if (url.origin !== location.origin) return null;
+      const image = new Image();
+      await new Promise(function (resolve, reject) {
+        image.onload = resolve;
+        image.onerror = reject;
+        image.src = url.href;
+      });
+      if (cue && (cue.x + cue.width > image.naturalWidth || cue.y + cue.height > image.naturalHeight)) return null;
+      const canvas = document.createElement("canvas");
+      drawStill(canvas, image, cue || { x: 0, y: 0, width: image.naturalWidth, height: image.naturalHeight });
+      return canvas;
+    }).catch(function () { return null; }));
+  }
+
+  async function warmNeighbours() {
+    const generation = state.generation;
+    for (const direction of [1, -1]) {
+      if (generation !== state.generation || !state.queue) return;
+      const queue = advanceQueue(state.queue, direction);
+      if (queue) await getStill(queue.ids[queue.index]);
+    }
   }
 
   function play() {
@@ -744,6 +800,11 @@ async function boot() {
     cancelTouch();
     if (!transition) resetSwipe();
     saveProgress();
+    if (state.scene && !state.fromBeginning && video.readyState >= 2 && video.videoWidth) {
+      const snapshot = document.createElement("canvas");
+      drawStill(snapshot, video);
+      storeStill(state.scene.id, Promise.resolve(snapshot));
+    }
     const generation = ++state.generation;
     resetPreview();
     state.startedAt = performance.now();
@@ -823,6 +884,7 @@ async function boot() {
       state.enableDelete = (result.configuration.plugins["stash-tv"] || {}).enableDelete === true;
       byId("delete").hidden = !state.enableDelete;
       cache.clear();
+      stills.clear();
       await loadScene();
     } catch (error) {
       phase("error", error.message);
@@ -840,7 +902,7 @@ async function boot() {
       showControls();
       return;
     }
-    if (transition) commitSwipe(direction);
+    if (transition) commitSwipe(direction, queue.ids[queue.index]);
     state.queue = queue;
     state.wantsPlay = true;
     loadScene(transition);
@@ -934,6 +996,7 @@ async function boot() {
     video.removeAttribute("poster");
     video.load();
     cache.delete(id);
+    stills.delete(id);
     let submitted = false;
     try {
       await activity;
@@ -996,30 +1059,48 @@ async function boot() {
     swipe.offset = 0;
     swipe.origin = 0;
     swipe.backdropOffset = 0;
+    swipe.target = null;
+    swipe.generation++;
     delete player.dataset.swipePhase;
     video.style.transform = "";
     const frame = byId("swipe-outgoing");
     frame.hidden = true;
     frame.style.transform = "";
+    frame.style.opacity = "";
     frame.width = frame.height = 0;
+    const incoming = byId("swipe-incoming");
+    incoming.hidden = true;
+    incoming.style.transform = "";
+    incoming.width = incoming.height = 0;
   }
 
   function returnSwipe() {
     if (swipe.phase !== "dragging") return;
-    if (reducedMotion.matches) return resetSwipe();
+    if (reducedMotion()) return resetSwipe();
     swipe.phase = "returning";
     player.dataset.swipePhase = "returning";
     video.style.transform = "translateY(0px)";
     byId("swipe-outgoing").style.transform = "translateY(" + swipe.backdropOffset + "px)";
+    byId("swipe-incoming").style.transform = "translateY(" + swipe.direction * swipe.height + "px)";
     swipe.timer = setTimeout(function () { resetSwipe(); showControls(); }, 180);
   }
 
   function startSwipe() {
-    if (reducedMotion.matches) return;
     clearTimeout(swipe.timer);
     cancelAnimationFrame(swipe.frame);
     swipe.frame = 0;
     const frame = byId("swipe-outgoing");
+    if (swipe.phase === "loading") {
+      const incoming = byId("swipe-incoming");
+      if (incoming.width) drawStill(frame, incoming);
+      else frame.width = frame.height = 0;
+      frame.hidden = false;
+      frame.style.transform = "translateY(0px)";
+      frame.style.opacity = "1";
+      video.style.transform = "translateY(0px)";
+      swipe.target = null;
+      swipe.generation++;
+    }
     swipe.origin = new DOMMatrix(getComputedStyle(video).transform).m42;
     swipe.backdropOffset = frame.hidden ? 0
       : new DOMMatrix(getComputedStyle(frame).transform).m42 - swipe.origin;
@@ -1030,48 +1111,75 @@ async function boot() {
   }
 
   function moveSwipe(offset) {
-    if (reducedMotion.matches) return;
     swipe.phase = "dragging";
     player.dataset.swipePhase = "dragging";
     swipe.height = player.clientHeight;
     const direction = offset < 0 ? 1 : -1;
     const available = state.queue && advanceQueue(state.queue, direction);
+    if (available) prepareIncoming(available.ids[available.index], direction);
+    else byId("swipe-incoming").hidden = true;
     const limit = swipe.height * 0.1;
     const drag = available ? offset : offset / (1 + Math.abs(offset) / limit);
     swipe.offset = Math.max(-swipe.height, Math.min(swipe.height, swipe.origin + drag));
     video.style.transform = "translateY(" + swipe.offset + "px)";
     byId("swipe-outgoing").style.transform = "translateY(" + (swipe.offset + swipe.backdropOffset) + "px)";
+    byId("swipe-incoming").style.transform = "translateY(" + (swipe.offset + direction * swipe.height) + "px)";
   }
 
-  function commitSwipe(direction) {
-    if (reducedMotion.matches || video.readyState < 2 || !video.videoWidth) {
-      resetSwipe();
-      return;
-    }
-    const frame = byId("swipe-outgoing");
-    frame.width = Math.min(1280, video.videoWidth);
-    frame.height = Math.round(frame.width * video.videoHeight / video.videoWidth);
-    frame.getContext("2d").drawImage(video, 0, 0, frame.width, frame.height);
-    frame.hidden = false;
-    frame.style.transform = "translateY(" + swipe.offset + "px)";
+  function prepareIncoming(id, direction) {
     swipe.direction = direction;
     swipe.height = player.clientHeight;
-    swipe.phase = "loading";
-    player.dataset.swipePhase = "loading";
-    video.style.transform = "translateY(" + (swipe.offset + direction * swipe.height) + "px)";
+    if (swipe.target === id) return;
+    swipe.target = id;
+    const generation = ++swipe.generation;
+    const incoming = byId("swipe-incoming");
+    incoming.width = incoming.height = 0;
+    incoming.hidden = false;
+    getStill(id).then(function (frame) {
+      if (frame && generation === swipe.generation) drawStill(incoming, frame);
+    });
+  }
+
+  function commitSwipe(direction, id) {
+    clearTimeout(swipe.timer);
+    cancelAnimationFrame(swipe.frame);
+    const reduce = reducedMotion();
+    const frame = byId("swipe-outgoing");
+    const incoming = byId("swipe-incoming");
+    if (video.readyState >= 2 && video.videoWidth && player.dataset.videoReady === "true") {
+      drawStill(frame, video);
+    } else if (swipe.phase !== "dragging" && incoming.width) {
+      drawStill(frame, incoming);
+    }
+    frame.hidden = false;
+    frame.style.opacity = "1";
+    frame.style.transform = "translateY(" + swipe.offset + "px)";
+    prepareIncoming(id, direction);
+    incoming.style.transform = "translateY(" + (reduce ? 0 : swipe.offset + direction * swipe.height) + "px)";
+    video.style.transform = "translateY(0px)";
+    frame.getBoundingClientRect();
+    swipe.phase = reduce ? "fading" : "settling";
+    player.dataset.swipePhase = swipe.phase;
+    swipe.frame = requestAnimationFrame(function () {
+      swipe.frame = 0;
+      incoming.style.transform = "translateY(0px)";
+      if (swipe.phase === "fading") frame.style.opacity = "0";
+      else frame.style.transform = "translateY(" + -direction * swipe.height + "px)";
+      swipe.timer = setTimeout(function () {
+        if (player.dataset.videoReady === "true") resetSwipe();
+        else {
+          swipe.phase = "loading";
+          player.dataset.swipePhase = "loading";
+          frame.hidden = true;
+          swipe.offset = swipe.origin = swipe.backdropOffset = 0;
+        }
+        showControls();
+      }, 180);
+    });
   }
 
   function settleSwipe() {
-    if (swipe.phase !== "loading") return;
-    if (reducedMotion.matches) return resetSwipe();
-    swipe.phase = "settling";
-    player.dataset.swipePhase = "settling";
-    swipe.frame = requestAnimationFrame(function () {
-      swipe.frame = 0;
-      video.style.transform = "translateY(0px)";
-      byId("swipe-outgoing").style.transform = "translateY(" + -swipe.direction * swipe.height + "px)";
-      swipe.timer = setTimeout(function () { resetSwipe(); showControls(); }, 180);
-    });
+    if (swipe.phase === "loading") resetSwipe();
   }
 
   function clearSeekFeedback() {
@@ -1131,7 +1239,7 @@ async function boot() {
     if (event.pointerType !== "touch") return;
     if (!event.isPrimary || touch) return;
     touchClickUntil = performance.now() + 1000;
-    if (surface.disabled || swipe.phase === "loading") {
+    if (surface.disabled) {
       cancelTouch();
       return;
     }
@@ -1350,6 +1458,15 @@ async function boot() {
     byId("mute").setAttribute("aria-expanded", String(open));
     showControls();
   };
+  byId("zoom").onclick = function () {
+    const fill = player.dataset.fit !== "cover";
+    player.dataset.fit = fill ? "cover" : "contain";
+    const label = fill ? "Fit video" : "Fill screen";
+    byId("zoom").setAttribute("aria-pressed", String(fill));
+    byId("zoom").setAttribute("aria-label", label);
+    byId("zoom").title = label;
+    showControls();
+  };
   document.addEventListener("pointerdown", function (event) {
     if (!event.target.closest(".volume-controls")) closeVolume();
   });
@@ -1420,6 +1537,7 @@ async function boot() {
         return;
       player.dataset.videoReady = "true";
       settleSwipe();
+      if (state.phase === "loading") warmNeighbours();
       if (state.phase === "loading") {
         if (state.wantsPlay) play();
         else phase("ready", "Press Play to start.");
@@ -1562,6 +1680,13 @@ async function boot() {
       if (!event.repeat && state.scene) {
         mark("key_seek_" + action.percent);
         seek(((Number((state.scene.files[0] || {}).duration) || 0) * action.percent) / 100);
+      }
+      return;
+    }
+    if (action.type === "navigate") {
+      if (!event.repeat) {
+        mark(action.direction > 0 ? "key_next" : "key_previous");
+        navigate(action.direction, true);
       }
       return;
     }
