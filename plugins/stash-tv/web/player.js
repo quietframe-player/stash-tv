@@ -842,7 +842,7 @@ async function boot() {
     cancelTouch();
     if (!transition) resetSwipe();
     saveProgress();
-    if (state.scene && !state.fromBeginning && !video.seeking &&
+    if (state.scene && !state.fromBeginning && !video.seeking && !video.ended &&
         player.dataset.videoReady === "true" && video.readyState >= 2 && video.videoWidth) {
       const snapshot = document.createElement("canvas");
       drawStill(snapshot, video);

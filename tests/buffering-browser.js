@@ -90,6 +90,22 @@ export default async function verifyBuffering(page, options) {
     check(Math.abs(await page.locator("#video").evaluate(video => video.currentTime) - saved) < 1, "Returning to a paused seek used an old checkpoint");
     results.push({ name: "repeated paused seeks and returning to an updated checkpoint keep native behavior", passed: true });
 
+    await page.request.get(options.baseURL + "/_test/delay/" + ids[2]);
+    const duration = await page.locator("#video").evaluate(video => video.duration);
+    await seek(duration - 0.2);
+    await page.locator("#toggle").click();
+    await page.waitForFunction(id => new URL(location.href).searchParams.get("scene") !== id, ids[2]);
+    await ready();
+    await wheel(-50);
+    await page.waitForFunction(() => document.querySelector("#player").dataset.swipePhase === "dragging");
+    check(await page.locator("#swipe-incoming").evaluate(canvas => canvas.width === 0), "Ended scene retained its last frame as the zero-second restart preview");
+    await wheel(-90); await ready();
+    check(await scene() === ids[2] && await page.locator("#video").evaluate(video => video.currentTime < 2), "Ended scene resumed its old position instead of restarting");
+    await page.locator("#toggle").click();
+    await page.request.get(options.baseURL + "/_test/delay/off");
+    await page.waitForTimeout(220);
+    results.push({ name: "ended videos restart at zero without displaying their final frame as a loading preview", passed: true });
+
     await wheel(40); await wheel(-30);
     await page.waitForTimeout(350);
     check(await scene() === ids[2] && await page.locator("#video").evaluate(video => new DOMMatrix(getComputedStyle(video).transform).m42 === 0), "Short reversed wheel did not return to current video");
