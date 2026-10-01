@@ -11,6 +11,7 @@ import json
 from pathlib import Path
 import shutil
 import socket
+import struct
 import sys
 import subprocess
 import time
@@ -26,6 +27,44 @@ CLI = ["npx", "--yes", "--package", "@playwright/cli@0.1.21", "playwright-cli"]
 
 def command(arguments, **options):
     return subprocess.run(arguments, cwd=ROOT, check=True, text=True, **options)
+
+
+def pad_mp4(path, padding, inside_moov):
+    data = bytearray(path.read_bytes())
+
+    def boxes(start, end):
+        while start < end:
+            size, kind = struct.unpack_from('>I4s', data, start)
+            if size < 8 or start + size > end:
+                raise RuntimeError('Invalid fixture MP4 box')
+            yield start, size, kind
+            start += size
+
+    top = list(boxes(0, len(data)))
+    moov, size, _ = next(box for box in top if box[2] == b'moov')
+    if inside_moov and moov > next(box[0] for box in top if box[2] == b'mdat'):
+        raise RuntimeError('Large-header fixture requires a progressive MP4')
+    end = moov + size
+    insertion = end if inside_moov else next(box[0] + box[1] for box in top if box[2] == b'ftyp')
+
+    def adjust(start, stop):
+        for offset, length, kind in boxes(start, stop):
+            if kind in [b'trak', b'mdia', b'minf', b'stbl']:
+                adjust(offset + 8, offset + length)
+            elif kind in [b'stco', b'co64']:
+                count = struct.unpack_from('>I', data, offset + 12)[0]
+                form, width = ('>I', 4) if kind == b'stco' else ('>Q', 8)
+                for index in range(count):
+                    position = offset + 16 + index * width
+                    value = struct.unpack_from(form, data, position)[0]
+                    if value >= insertion:
+                        struct.pack_into(form, data, position, value + padding)
+
+    adjust(moov + 8, end)
+    if inside_moov:
+        struct.pack_into('>I', data, moov, size + padding)
+    free = struct.pack('>I4s', padding, b'free') + bytes(padding - 8)
+    path.write_bytes(data[:insertion] + free + data[insertion:])
 
 
 def run(args):
@@ -119,7 +158,13 @@ plugins_path: /config/plugins
             command(["docker", "exec", container, "ffmpeg", "-hide_banner", "-loglevel", "error", "-i", "/media/sintel.mp4", "-t", "50", "-c", "copy", "/media/sintel-short.mp4"])
         elif args.suite == "buffering":
             for length in [40, 43, 46, 49]:
-                command(["docker", "exec", container, "ffmpeg", "-hide_banner", "-loglevel", "error", "-i", "/media/sintel.mp4", "-t", str(length), "-c", "copy", f"/media/sintel-{length}.mp4"])
+                delayed = ["-itsoffset", "0.066"] if length == 43 else []
+                progressive = ["-movflags", "+faststart"] if length != 46 else []
+                command(["docker", "exec", container, "ffmpeg", "-hide_banner", "-loglevel", "error", *delayed,
+                         "-i", "/media/sintel.mp4", "-t", str(length), "-c", "copy", *progressive,
+                         f"/media/sintel-{length}.mp4"])
+            pad_mp4(media / "sintel-40.mp4", 2 * 1024 * 1024, inside_moov=True)
+            pad_mp4(media / "sintel-46.mp4", 2 * 1024 * 1024, inside_moov=False)
         api("mutation($input:ScanMetadataInput!){metadataScan(input:$input)}", {
             "input": {"paths": ["/media"], "scanGenerateSprites": True,
                       "scanGenerateCovers": True, "scanGeneratePreviews": False,
