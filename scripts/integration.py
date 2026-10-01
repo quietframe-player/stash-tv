@@ -64,7 +64,9 @@ def pad_mp4(path, padding, inside_moov):
     if inside_moov:
         struct.pack_into('>I', data, moov, size + padding)
     free = struct.pack('>I4s', padding, b'free') + bytes(padding - 8)
-    path.write_bytes(data[:insertion] + free + data[insertion:])
+    padded = path.with_name(path.name + '.padded')
+    padded.write_bytes(data[:insertion] + free + data[insertion:])
+    padded.replace(path)
 
 
 def run(args):
