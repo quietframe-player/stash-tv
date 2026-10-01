@@ -47,10 +47,10 @@ class MediaProxy:
                     owner.delay = None if match[1] == "off" else match[1]
                     self.json({"delay": owner.delay})
                     return
-                stream = re.fullmatch(r"/scene/(\d+)/stream", path)
+                stream = re.fullmatch(r"/scene/(\d+)/stream(?:\.(?:mp4|webm|mkv))?", path)
                 entry = None
                 if stream:
-                    entry = {"id": stream[1], "range": self.headers.get("Range"), "bytes": 0,
+                    entry = {"id": stream[1], "path": path, "range": self.headers.get("Range"), "bytes": 0,
                              "destination": self.headers.get("Sec-Fetch-Dest"), "started": time.monotonic()}
                     with owner.lock:
                         owner.requests.append(entry)

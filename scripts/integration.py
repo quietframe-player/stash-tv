@@ -158,6 +158,8 @@ plugins_path: /config/plugins
         print(json.dumps(install(base_url, package_url, apply=True)), flush=True)
         if args.suite == "mobile":
             command(["docker", "exec", container, "ffmpeg", "-hide_banner", "-loglevel", "error", "-i", "/media/sintel.mp4", "-t", "50", "-c", "copy", "/media/sintel-short.mp4"])
+        elif args.suite == "latency":
+            command(["docker", "exec", container, "ffmpeg", "-hide_banner", "-loglevel", "error", "-i", "/media/sintel.mp4", "-c", "copy", "/media/sintel.mkv"])
         elif args.suite == "buffering":
             for length in [40, 43, 46, 49]:
                 delayed = ["-itsoffset", "0.066"] if length == 43 else []
@@ -174,16 +176,16 @@ plugins_path: /config/plugins
         })
         for _ in range(90):
             scanned = api("{findScenes{count}jobQueue{id}}")
-            expected = {"mobile": 2, "buffering": 5}.get(args.suite, 1)
+            expected = {"mobile": 2, "buffering": 5, "latency": 2}.get(args.suite, 1)
             if scanned['findScenes']['count'] == expected and not scanned['jobQueue']:
                 break
             time.sleep(1)
         else:
             raise RuntimeError("Sintel scan and preview generation did not finish")
-        if args.suite in ["buffering", "mobile"]:
+        if args.suite in ["buffering", "mobile", "latency"]:
             proxy = MediaProxy(port)
             base_url = proxy.url
-        source = (ROOT / {"plugin": "tests/plugin-browser.js", "mobile": "tests/mobile-browser.js", "playback": "tests/browser.js", "buffering": "tests/buffering-browser.js"}[args.suite]).read_text()
+        source = (ROOT / {"plugin": "tests/plugin-browser.js", "mobile": "tests/mobile-browser.js", "playback": "tests/browser.js", "buffering": "tests/buffering-browser.js", "latency": "tests/latency-browser.js"}[args.suite]).read_text()
         source = source.replace("export default ", "", 1)
         for browser in browsers:
             session = f"stash-tv-{token}-{browser}"
@@ -193,8 +195,11 @@ plugins_path: /config/plugins
                 command(prefix + ["open", "about:blank", "--browser", browser], capture_output=True)
                 options = {"baseURL": base_url, "browser": browser, "reportDir": str(report), "destructive": browser == browsers[-1]}
                 script = "async page => (" + source + ")(page," + json.dumps(options) + ")"
-                output = command(prefix + ["run-code", script], capture_output=True).stdout
-                (report / (browser + ".log")).write_text(output)
+                run_browser = subprocess.run(prefix + ["run-code", script], cwd=ROOT, capture_output=True, text=True)
+                output = run_browser.stdout
+                (report / (browser + ".log")).write_text(output + run_browser.stderr)
+                if run_browser.returncode:
+                    raise RuntimeError("Browser runner failed; see " + str(report / (browser + ".log")))
                 marker = "### Result\n"
                 if marker not in output:
                     raise RuntimeError("Browser runner did not return a result: " + output[:1000])
@@ -226,6 +231,6 @@ plugins_path: /config/plugins
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--apply", action="store_true", help="Download the fixture and run isolated local integration tests")
-    parser.add_argument("--suite", choices=["playback", "plugin", "mobile", "buffering"], default="playback")
+    parser.add_argument("--suite", choices=["playback", "plugin", "mobile", "buffering", "latency"], default="playback")
     parser.add_argument("--browser", choices=["chrome", "webkit"], action="append")
     run(parser.parse_args())
