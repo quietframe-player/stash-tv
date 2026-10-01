@@ -26,6 +26,9 @@ export default async function verifyMobile(page, options) {
       document.addEventListener(type,e=>record(type,{target:e.target.id,trusted:e.isTrusted,primary:e.isPrimary,value:e.target.value}),true);
     for (const type of ['playing','pause','seeking','seeked','waiting','error','ratechange'])
       document.addEventListener(type,()=>record(type,{rate:document.querySelector('#video')?.playbackRate}),true);
+    document.addEventListener('transitionrun',e=>record('transitionrun',{
+      target:e.target.id, property:e.propertyName,
+    }),true);
   });
   const api = async (query, variables = {}) => {
     const response = await page.request.post(options.baseURL + '/graphql', { data: { query, variables } });
@@ -231,6 +234,11 @@ export default async function verifyMobile(page, options) {
     await page.evaluate(()=>{document.querySelector('#video').playbackRate=1;});
     results.push({name:'hold restores the previous speed without changing the media source',passed:true});
     before = await sample();
+    const nextScene=findScenes.scenes.find(scene=>scene.id!==before.scene).id;
+    const delayedURL='**/scene/'+nextScene+'/stream**';
+    let releaseDelayed;
+    const delayed=new Promise(resolve=>{releaseDelayed=resolve;});
+    await page.route(delayedURL,async route=>{await delayed;await route.continue();});
     await touch('down',195,450); await touch('move',195,320);
     const drag=await page.evaluate(() => ({phase:document.querySelector('#player').dataset.swipePhase,
       offset:new DOMMatrix(getComputedStyle(document.querySelector('#video')).transform).m42,
@@ -239,9 +247,22 @@ export default async function verifyMobile(page, options) {
     await page.screenshot({path:options.reportDir+'/'+options.browser+'-swipe-drag.png'});
     await touch('up',195,320);
     check(await page.evaluate(() => ['loading','settling'].includes(document.querySelector('#player').dataset.swipePhase) && !document.querySelector('#swipe-outgoing').hidden), 'Outgoing decoded frame not retained during handoff');
+    await page.waitForTimeout(300);
+    const handoff=await page.evaluate(()=>({
+      phase:document.querySelector('#player').dataset.swipePhase,
+      outgoingHidden:document.querySelector('#swipe-outgoing').hidden,
+      incomingHidden:document.querySelector('#swipe-incoming')?.hidden,
+      offset:new DOMMatrix(getComputedStyle(document.querySelector('#swipe-incoming') || document.querySelector('#video')).transform).m42,
+      ready:document.querySelector('#player').dataset.videoReady,
+    }));
+    check(handoff.phase==='loading' && handoff.outgoingHidden && handoff.incomingHidden===false &&
+      handoff.offset===0 && handoff.ready==='false',
+      'Swipe waited for the delayed stream before finishing its page transition: '+JSON.stringify(handoff));
+    releaseDelayed();
     await page.waitForFunction(id=>new URL(location.href).searchParams.get('scene')!==id,before.scene);
     await ready();
     await settled();
+    await page.unroute(delayedURL);
     after=await sample();
     check(!after.paused && after.rate === 1,'Swipe next failed to play');
     await touch('down',195,320); await touch('move',195,450); await touch('up',195,450);
@@ -273,15 +294,64 @@ export default async function verifyMobile(page, options) {
     check((await sample()).scene===before.scene,'Previous at first scene changed queue');
     results.push({name:'cancelled swipe and queue boundary return without changing video',passed:true});
     await page.emulateMedia({reducedMotion:'reduce'});
-    await touch('down',195,450); await touch('move',195,320); await touch('up',195,320);
+    await tap();
+    await page.waitForFunction(()=>document.querySelector('#video').paused);
+    await position(10);
+    const clip=await page.locator('#video').evaluate(el=>{
+      const r=el.getBoundingClientRect();
+      const height=r.width*el.videoHeight/el.videoWidth;
+      return {x:Math.round(r.x+r.width/4),y:Math.round(r.y+(r.height-height)/2-50),
+        width:Math.round(r.width/2),height:30};
+    });
+    const stationary=await page.screenshot({clip});
+    await touch('down',195,450); await touch('move',195,320);
+    const reducedDrag=await page.evaluate(()=>({
+      phase:document.querySelector('#player').dataset.swipePhase,
+      offset:new DOMMatrix(getComputedStyle(document.querySelector('#video')).transform).m42,
+    }));
+    check(reducedDrag.phase==='dragging' && reducedDrag.offset===-130,
+      'Reduced-motion swipe did not follow finger: '+JSON.stringify(reducedDrag));
+    const moved=await page.screenshot({clip,path:options.reportDir+'/'+options.browser+'-reduced-motion-drag.png'});
+    check(!stationary.equals(moved),'Reduced-motion drag changed styles without moving rendered video pixels');
+    const otherScene=findScenes.scenes.find(scene=>scene.id!==before.scene).id;
+    let releaseStream;
+    const incoming=new Promise(resolve=>{releaseStream=resolve;});
+    const incomingURL='**/scene/'+otherScene+'/stream**';
+    await page.route(incomingURL,async route=>{await incoming;await route.continue();});
+    await touch('up',195,320);
+    check(await page.evaluate(()=>document.querySelector('#player').dataset.swipePhase==='loading' &&
+      !document.querySelector('#swipe-outgoing').hidden), 'Reduced-motion handoff discarded the outgoing frame');
+    await page.waitForTimeout(150);
+    await page.waitForTimeout(150);
+    check(await page.locator('#swipe-incoming').isVisible() && await page.locator('#swipe-outgoing').isHidden(),
+      'Reduced-motion fade waited for the delayed incoming stream');
+    releaseStream();
     await page.waitForFunction(id=>new URL(location.href).searchParams.get('scene')!==id,before.scene);
     await ready(); await settled();
+    await page.unroute(incomingURL);
+    check(await page.evaluate(()=>window.mobileEvents.some(e=>e.type==='transitionrun' &&
+      e.target==='swipe-outgoing' && e.property==='opacity')),'Reduced-motion handoff did not fade its outgoing frame');
     check(await page.evaluate(()=>getComputedStyle(document.querySelector('#video')).transform==='none'),'Reduced motion still slides video');
     await touch('down',195,320); await touch('move',195,450); await touch('up',195,450);
     await page.waitForFunction(id=>new URL(location.href).searchParams.get('scene')===id,before.scene);
     await ready(); await settled();
     await page.emulateMedia({reducedMotion:'no-preference'});
-    results.push({name:'reduced motion preserves swipe navigation without animation',passed:true});
+    results.push({name:'reduced motion follows the finger, retains the decoded frame, and fades on release',passed:true});
+    before=await sample();
+    await page.keyboard.press('ArrowUp');
+    check(await page.evaluate(()=>['loading','settling'].includes(document.querySelector('#player').dataset.swipePhase) &&
+      !document.querySelector('#swipe-outgoing').hidden),'Up did not start the swipe transition');
+    await page.waitForFunction(id=>new URL(location.href).searchParams.get('scene')!==id,before.scene);
+    await ready(); await settled();
+    await page.locator('#surface').dispatchEvent('keydown',{key:'ArrowDown',keyCode:40,repeat:true,bubbles:true});
+    check((await sample()).scene!==before.scene,'Repeated Down navigated to another video');
+    await page.keyboard.press('ArrowDown');
+    check(await page.evaluate(()=>['loading','settling'].includes(document.querySelector('#player').dataset.swipePhase)),
+      'Down did not start the swipe transition');
+    await page.waitForFunction(id=>new URL(location.href).searchParams.get('scene')===id,before.scene);
+    await ready(); await settled();
+    check(!(await sample()).paused && await page.locator('video').count()===1,'Arrow navigation stopped playback or added another decoder');
+    results.push({name:'Up and Down animate next and previous, ignoring repeated keydown',passed:true});
     await page.waitForFunction(() => !document.querySelector('#video').paused);
     await position(10);
     before=await sample();
@@ -306,6 +376,11 @@ export default async function verifyMobile(page, options) {
     check(await page.locator('#volume-panel').isVisible(), 'Volume button did not open panel');
     await page.locator('#volume').evaluate(el=>{el.value='35';el.dispatchEvent(new Event('input',{bubbles:true}));});
     check(await page.evaluate(()=>Math.abs(document.querySelector('#video').volume-0.35)<0.01),'Volume slider failed');
+    before=await sample();
+    await page.locator('#volume').focus();
+    await page.keyboard.press('ArrowUp');
+    check((await sample()).scene===before.scene && await page.evaluate(()=>document.querySelector('#video').volume>0.35),
+      'Focused volume slider navigated instead of changing volume');
     await page.locator('#volume-mute').tap();
     check(await page.evaluate(()=>document.querySelector('#video').muted),'Mute action failed');
     await page.locator('#mute').tap();

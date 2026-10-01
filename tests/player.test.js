@@ -131,6 +131,14 @@ test("number keys seek by percentage while arrows seek and Enter requests fullsc
   expect(remoteAction({ key: "Backspace" })).toBeNull();
 });
 
+test("Up and Down navigate through the swipe transition", () => {
+  for (const [key, keyCode, direction] of [["ArrowUp", 38, 1], ["ArrowDown", 40, -1]]) {
+    const action = { type: "navigate", direction };
+    expect(remoteAction({ key })).toEqual(action);
+    expect(remoteAction({ key: "Unidentified", keyCode })).toEqual(action);
+  }
+});
+
 test("previous follows the same shuffled snapshot after next", () => {
   const queue = makeQueue([{ id: "9" }, { id: "3" }, { id: "47" }], "3");
   const next = advanceQueue(queue, 1);
