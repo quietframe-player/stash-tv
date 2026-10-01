@@ -278,6 +278,7 @@ async function boot() {
   let activity = Promise.resolve();
   const reducedMotion = function () { return matchMedia("(prefers-reduced-motion: reduce)").matches; };
   const swipe = { phase: "idle", direction: 0, origin: 0, offset: 0, backdropOffset: 0, height: 0, target: null, generation: 0, timer: 0, frame: 0 };
+  let pan = 0.5;
   const seekFeedback = { side: 0, seconds: 0, until: 0, timer: 0, pulseTimer: 0 };
 
   async function api(query, variables, keepalive, timeout) {
@@ -820,6 +821,7 @@ async function boot() {
     video.removeAttribute("src");
     video.removeAttribute("poster");
     player.dataset.videoReady = "false";
+    positionVideo(0.5);
     video.load();
     phase("loading", "Loading scene...");
     showControls();
@@ -1094,6 +1096,7 @@ async function boot() {
       const incoming = byId("swipe-incoming");
       if (incoming.width) drawStill(frame, incoming);
       else frame.width = frame.height = 0;
+      frame.style.objectPosition = incoming.style.objectPosition;
       frame.hidden = false;
       frame.style.transform = "translateY(0px)";
       frame.style.opacity = "1";
@@ -1134,6 +1137,7 @@ async function boot() {
     const generation = ++swipe.generation;
     const incoming = byId("swipe-incoming");
     incoming.width = incoming.height = 0;
+    incoming.style.objectPosition = "50% 50%";
     incoming.hidden = false;
     getStill(id).then(function (frame) {
       if (frame && generation === swipe.generation) drawStill(incoming, frame);
@@ -1148,8 +1152,10 @@ async function boot() {
     const incoming = byId("swipe-incoming");
     if (video.readyState >= 2 && video.videoWidth && player.dataset.videoReady === "true") {
       drawStill(frame, video);
+      frame.style.objectPosition = video.style.objectPosition;
     } else if (swipe.phase !== "dragging" && incoming.width) {
       drawStill(frame, incoming);
+      frame.style.objectPosition = incoming.style.objectPosition;
     }
     frame.hidden = false;
     frame.style.opacity = "1";
@@ -1223,6 +1229,17 @@ async function boot() {
     tap = null;
   }
 
+  function positionVideo(position) {
+    pan = Math.max(0, Math.min(1, position));
+    const value = pan * 100 + "% 50%";
+    video.style.objectPosition = value;
+    byId("swipe-incoming").style.objectPosition = value;
+  }
+
+  function panVideo(dx, contact) {
+    positionVideo(contact.pan - dx / contact.overflow);
+  }
+
   function cancelTouch() {
     if (touch) {
       clearTimeout(touch.timer);
@@ -1245,9 +1262,16 @@ async function boot() {
     }
     event.preventDefault();
     surface.setPointerCapture(event.pointerId);
+    const frame = player.dataset.videoReady === "true" ? video : byId("swipe-incoming");
+    const width = frame.videoWidth || frame.width;
+    const height = frame.videoHeight || frame.height;
+    const overflow = player.dataset.fit === "cover" && width && height
+      ? Math.max(0, width * Math.max(player.clientWidth / width, player.clientHeight / height) - player.clientWidth)
+      : 0;
     touch = {
       id: event.pointerId, x: event.clientX, y: event.clientY,
       phase: "pending", rate: video.playbackRate, timer: 0, time: performance.now(),
+      pan: pan, overflow: overflow,
     };
     touch.timer = setTimeout(function () {
       if (!touch || touch.phase !== "pending" || video.paused) return;
@@ -1262,11 +1286,14 @@ async function boot() {
     const dx = event.clientX - touch.x;
     const dy = event.clientY - touch.y;
     if (touch.phase === "swiping") { moveSwipe(dy); return; }
+    if (touch.phase === "panning") { panVideo(dx, touch); return; }
     if (Math.hypot(dx, dy) <= 12 || touch.phase !== "pending") return;
     clearTimeout(touch.timer);
     cancelTap();
-    touch.phase = Math.abs(dy) > Math.abs(dx) * 1.5 ? "swiping" : "moving";
+    touch.phase = Math.abs(dy) > Math.abs(dx) * 1.5 ? "swiping"
+      : touch.overflow > 0 && Math.abs(dx) > Math.abs(dy) * 1.5 ? "panning" : "moving";
     if (touch.phase === "swiping") { startSwipe(); moveSwipe(dy); }
+    if (touch.phase === "panning") panVideo(dx, touch);
   });
   surface.addEventListener("pointerup", function (event) {
     if (!touch || touch.id !== event.pointerId) return;
@@ -1282,6 +1309,11 @@ async function boot() {
     }
     const dx = event.clientX - ended.x;
     const dy = event.clientY - ended.y;
+    if (ended.phase === "panning") {
+      cancelTap();
+      panVideo(dx, ended);
+      return;
+    }
     if (ended.phase === "swiping" || ended.phase === "moving" || Math.hypot(dx, dy) > 12) {
       cancelTap();
       const distance = Math.abs(dy);
@@ -1461,6 +1493,7 @@ async function boot() {
   byId("zoom").onclick = function () {
     const fill = player.dataset.fit !== "cover";
     player.dataset.fit = fill ? "cover" : "contain";
+    positionVideo(0.5);
     const label = fill ? "Fit video" : "Fill screen";
     byId("zoom").setAttribute("aria-pressed", String(fill));
     byId("zoom").setAttribute("aria-label", label);

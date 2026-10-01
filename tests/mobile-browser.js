@@ -416,6 +416,63 @@ export default async function verifyMobile(page, options) {
     check(await page.locator('#zoom').getAttribute('aria-pressed')==='false' &&
       await page.locator('#video').evaluate(el=>getComputedStyle(el).objectFit==='contain'), 'Zoom did not restore the full frame');
     results.push({name:'mobile zoom fills the screen, survives navigation, and restores fit without changing icons',passed:true});
+    await page.locator('#toggle').tap();
+    await page.waitForFunction(()=>document.querySelector('#video').paused);
+    await position(20);
+    await page.locator('#zoom').tap();
+    const panOrigin=await sample();
+    const framing=()=>page.locator('#video').evaluate(el=>({
+      position:parseFloat(getComputedStyle(el).objectPosition),
+      overflow:el.videoWidth*Math.max(el.clientWidth/el.videoWidth,el.clientHeight/el.videoHeight)-el.clientWidth,
+      transform:getComputedStyle(el).transform,
+    }));
+    const center=await framing();
+    check(center.overflow>300 && center.position===50,'Expected a centered, horizontally cropped fixture');
+    const centeredImage=await page.screenshot({clip:{x:10,y:100,width:370,height:430}});
+    await touch('down',100,350); await touch('move',250,355);
+    const panned=await framing();
+    check(Math.abs((center.position-panned.position)*center.overflow/100-150)<2 && panned.transform==='none',
+      'Fill did not follow the horizontal drag: '+JSON.stringify({center,panned}));
+    await touch('move',250,600); await touch('up',250,600);
+    const pannedImage=await page.screenshot({clip:{x:10,y:100,width:370,height:430}});
+    check(!centeredImage.equals(pannedImage),'Horizontal drag changed state but not the rendered video crop');
+    check((await sample()).scene===panOrigin.scene && (await sample()).paused &&
+      Math.abs((await sample()).time-panOrigin.time)<0.1,'Pan changed scene, playback, or seek position');
+    for(let drag=0;drag<8;drag++) {
+      await touch('down',50,350); await touch('move',350,350); await touch('up',350,350);
+    }
+    check((await framing()).position===0,'Repeated pan did not clamp to the left edge');
+    await touch('down',350,350); await touch('move',50,350); await touch('up',50,350);
+    check((await framing()).position>0,'Pan could not move away from its clamped edge');
+    for(let drag=0;drag<8;drag++) {
+      await touch('down',350,350); await touch('move',50,350); await touch('up',50,350);
+    }
+    check((await framing()).position===100,'Repeated pan did not clamp to the right edge');
+    await page.setViewportSize({width:844,height:390});
+    check((await framing()).overflow<1,'Expected an uncropped horizontal view in landscape');
+    await touch('down',100,220); await touch('move',250,220); await touch('up',250,220);
+    check((await framing()).position===100,'Uncropped video still moved horizontally');
+    await page.setViewportSize({width:390,height:844});
+    await page.screenshot({path:options.reportDir+'/'+options.browser+'-fill-panned.png'});
+    await touch('down',195,450); await touch('move',195,320); await touch('up',195,320);
+    check(await page.locator('#swipe-outgoing').evaluate(el=>parseFloat(getComputedStyle(el).objectPosition))===100 &&
+      await page.locator('#swipe-incoming').evaluate(el=>parseFloat(getComputedStyle(el).objectPosition))===50,
+      'Vertical handoff changed the outgoing crop or inherited it on the new scene');
+    await ready(); await settled();
+    check((await sample()).scene!==panOrigin.scene && (await framing()).position===50,
+      'Vertical swipe failed after panning or new video did not start centered');
+    await page.keyboard.press('ArrowDown'); await ready(); await settled();
+    await page.locator('#toggle').tap();
+    await page.waitForFunction(()=>document.querySelector('#video').paused);
+    await touch('down',250,350); await touch('move',100,350); await touch('cancel');
+    const cancelledPan=(await framing()).position;
+    await page.waitForTimeout(350);
+    check(cancelledPan>50 && (await framing()).position===cancelledPan && (await sample()).paused &&
+      (await sample()).rate===1,'Cancelled pan reset the view or triggered tap/hold playback');
+    await page.locator('#zoom').tap();
+    check((await framing()).position===50,'Fit did not recenter the full video');
+    results.push({name:'Fill pans with the finger, changes rendered pixels, clamps both edges, and leaves playback alone',passed:true});
+    await page.locator('#toggle').tap();
     await page.waitForFunction(() => !document.querySelector('#video').paused);
     await position(10);
     before=await sample();
