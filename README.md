@@ -81,6 +81,9 @@ Portrait mode gives the seek bar a full row and keeps icons at their regular siz
 Volume stays behind its speaker button on desktop and mobile.
 On touch devices, the zoom button toggles between fitting the whole video and
 filling the screen by cropping its edges. The choice stays active between videos.
+In Fill mode, drag left or right to move the cropped video with your finger.
+Panning stops at the image edges. Each new video starts centered, and switching
+back to Fit restores the whole frame. Vertical swipes still change videos.
 Fullscreen uses the browser API when available and the native video player on iPhones
 that only support video fullscreen. Native iPhone fullscreen uses Apple's controls;
 custom gestures remain available in the inline player.
