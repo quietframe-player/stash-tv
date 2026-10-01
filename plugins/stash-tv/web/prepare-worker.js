@@ -1,16 +1,18 @@
 import { createFile, DataStream } from "./mp4box-parser.js?v=2.4.1";
 
 const ITEM_LIMIT = 16 * 1024 * 1024;
-const INDEX_LIMIT = 4 * 1024 * 1024;
+const INDEX_LIMIT = 8 * 1024 * 1024;
 const PAGE = 1024 * 1024;
 let active = null;
 
-function trackShift(track) {
+function trackShift(track, movieTimescale) {
   const edits = track.edts?.elst.entries || [];
   if (!edits.length) return 0;
-  if (edits.length !== 1 || edits[0].media_time < 0 || edits[0].media_rate_integer !== 1)
+  if (edits.some(edit => edit.media_rate_integer !== 1 || edit.media_rate_fraction !== 0) ||
+      edits.slice(0, -1).some(edit => edit.media_time !== -1) || edits.at(-1).media_time < 0)
     throw new Error("Unsupported edit list");
-  return edits[0].media_time / track.mdia.mdhd.timescale;
+  const lead = edits.slice(0, -1).reduce((seconds, edit) => seconds + edit.segment_duration / movieTimescale, 0);
+  return edits.at(-1).media_time / track.mdia.mdhd.timescale - lead;
 }
 
 async function prepare(input, signal) {
@@ -53,9 +55,11 @@ async function prepare(input, signal) {
     const range = await read(offset, Math.min(total || input.size, offset + PAGE) - 1);
     indexBytes += range.data.byteLength;
     range.data.fileStart = offset;
-    const next = file.appendBuffer(range.data);
+    const suggested = file.appendBuffer(range.data);
     if (parserError) throw parserError;
     if (info) break;
+    // Only mdat payloads can skip bytes; incomplete headers and padding must stay contiguous.
+    const next = file.parsingMdat ? suggested : range.end + 1;
     if (indexBytes >= INDEX_LIMIT || next >= input.size || next <= offset)
       throw new Error("MP4 index exceeds preparation limit");
     offset = next;
@@ -63,18 +67,20 @@ async function prepare(input, signal) {
   if (!info.videoTracks.length || info.isFragmented) throw new Error("No progressive MP4 video track");
   const videoInfo = info.videoTracks[0];
   const track = file.getTrackById(videoInfo.id);
-  const shift = trackShift(track);
+  const shift = trackShift(track, info.timescale);
   const target = Math.max(0, Math.min(input.seconds, info.duration / info.timescale - 0.05));
   let first = -1;
   for (let i = 0; i < track.samples.length; i++) {
     const sample = track.samples[i];
     if (sample.is_sync && sample.cts / sample.timescale - shift <= target) first = i;
   }
+  if (first < 0 && track.samples[0]?.is_sync && track.samples[0].cts / track.samples[0].timescale - shift > target)
+    first = 0;
   if (first < 0) throw new Error("No preceding keyframe");
   let start = track.samples[first].offset, end = start;
   for (const item of info.tracks) {
     const samples = file.getTrackById(item.id).samples;
-    const delay = trackShift(file.getTrackById(item.id));
+    const delay = trackShift(file.getTrackById(item.id), info.timescale);
     for (let i = item.id === track.tkhd.track_id ? first : 0; i < samples.length; i++) {
       const sample = samples[i];
       const seconds = sample.cts / sample.timescale - delay;

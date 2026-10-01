@@ -82,6 +82,9 @@ A local service worker feeds the prepared ranges to the existing native video el
 The cache holds at most four items, 16 MiB each and 64 MiB total, expires after ten
 minutes, and is cleared when the page closes. Stored cache keys hash the stream URL;
 the cache index does not persist its authorization parameters.
+MP4 headers can span range requests or follow a large padding box. Their read budget
+is 8 MiB within the same 16 MiB item limit. A leading empty edit uses the movie's
+timing scale when aligning the checkpoint frame.
 
 A worker briefly decodes the exact checkpoint frame when WebCodecs supports the codec,
 then releases its decoder. Returning to a watched scene can reuse its last decoded

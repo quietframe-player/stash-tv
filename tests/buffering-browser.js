@@ -19,7 +19,8 @@ export default async function verifyBuffering(page, options) {
   const cache = () => page.evaluate(async () => {
     const cache = await caches.open("stash-tv-media-v1");
     const keys = (await cache.keys()).filter(request => request.url.endsWith("/index"));
-    return Promise.all(keys.map(async key => (await cache.match(key)).json()));
+    const responses = await Promise.all(keys.map(key => cache.match(key)));
+    return Promise.all(responses.filter(Boolean).map(response => response.json()));
   });
   const seek = async seconds => {
     await page.locator("#seek").evaluate((range, seconds) => { range.value = String(seconds); range.dispatchEvent(new Event("change", { bubbles: true })); }, seconds);
@@ -107,7 +108,7 @@ export default async function verifyBuffering(page, options) {
     results.push({ name: "ended videos restart at zero without displaying their final frame as a loading preview", passed: true });
 
     await wheel(40); await wheel(-30);
-    await page.waitForTimeout(350);
+    await page.waitForFunction(() => !document.querySelector("#player").dataset.swipePhase, null, { timeout: 2000 });
     check(await scene() === ids[2] && await page.locator("#video").evaluate(video => new DOMMatrix(getComputedStyle(video).transform).m42 === 0), "Short reversed wheel did not return to current video");
     const rail = await page.locator("#seek").boundingBox();
     await page.mouse.move(rail.x + rail.width / 2, rail.y + rail.height / 2); await page.mouse.wheel(0, 400);
@@ -148,6 +149,24 @@ export default async function verifyBuffering(page, options) {
     check(await scene() === ids[4] && errors.length === 0, "Cancelled preparation replaced the current scene");
     check((await cache()).length <= 2, "Obsolete queue entries survived the new neighborhood");
     results.push({ name: "current seeking, hidden-page lifecycle, and rapid navigation cancel background work", passed: true });
+
+    const compatibility = [];
+    for (const filename of ["sintel-40.mp4", "sintel-43.mp4", "sintel-46.mp4"]) {
+      const target = findScenes.scenes.find(item => item.files[0].path.endsWith("/" + filename)).id;
+      const index = ids.indexOf(target);
+      const neighbor = ids[index === 0 ? 1 : index - 1];
+      await page.goto("about:blank");
+      await api("mutation($id:ID!){sceneSaveActivity(id:$id,resume_time:20,playDuration:0)}", { id: target });
+      await page.goto(options.baseURL + "/plugin/stash-tv/assets/index.html?autoplay=false&seed=17&scene=" + neighbor);
+      await ready();
+      await page.waitForFunction(id => window.bufferEvents.some(event => event.state === "prepared" && event.id === id), target);
+      const prepared = await page.evaluate(id => window.bufferEvents.find(event => event.state === "prepared" && event.id === id), target);
+      check(Math.abs(prepared.seconds - 20) < 0.05 && Math.abs(prepared.frameTime - 20) < 0.05,
+        "MP4 timing or header handling changed the resume frame: " + JSON.stringify({ filename, prepared }));
+      check(prepared.bytes <= 16 * 1024 * 1024, "Large headers exceeded the item budget");
+      compatibility.push({ filename, ...prepared });
+    }
+    results.push({ name: "large front indexes, leading empty edits, and leading padding with a tail index buffer at the native checkpoint", passed: true, compatibility });
 
     const fallbackContext = await page.context().browser().newContext({ serviceWorkers: "block" });
     const fallback = await fallbackContext.newPage();
