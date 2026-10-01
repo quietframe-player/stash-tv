@@ -5,12 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="referrer" content="same-origin" />
     <title>Stash TV</title>
-    <link rel="stylesheet" href="./style.css?v=0.3.3" />
-    <script type="module" src="./player.js?v=0.3.3"></script>
+    <link rel="stylesheet" href="./style.css?v=0.4.0" />
+    <script type="module" src="./player.js?v=0.4.0"></script>
   </head>
   <body>
     <main id="player" tabindex="-1" aria-label="Stash TV player" data-phase="loading">
-      <video id="video" playsinline preload="metadata"></video>
+      <video id="video" playsinline preload="metadata" crossorigin="anonymous"></video>
       <canvas id="swipe-incoming" hidden aria-hidden="true"></canvas>
       <canvas id="swipe-outgoing" hidden aria-hidden="true"></canvas>
       <button id="surface" type="button" aria-label="Play video"></button>

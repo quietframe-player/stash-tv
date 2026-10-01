@@ -6,6 +6,7 @@ import functools
 import http.server
 import threading
 from install import install
+from media_proxy import MediaProxy
 import json
 from pathlib import Path
 import shutil
@@ -74,6 +75,7 @@ plugins_path: /config/plugins
         listener.bind(("127.0.0.1", 0))
         port = listener.getsockname()[1]
     base_url = f"http://127.0.0.1:{port}"
+    proxy = None
     container = "stash-tv-test-" + token
     command(["python3", "scripts/build.py"])
     server = http.server.ThreadingHTTPServer(("0.0.0.0", 0), functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(ROOT / "dist")))
@@ -115,6 +117,9 @@ plugins_path: /config/plugins
         print(json.dumps(install(base_url, package_url, apply=True)), flush=True)
         if args.suite == "mobile":
             command(["docker", "exec", container, "ffmpeg", "-hide_banner", "-loglevel", "error", "-i", "/media/sintel.mp4", "-t", "50", "-c", "copy", "/media/sintel-short.mp4"])
+        elif args.suite == "buffering":
+            for length in [40, 43, 46, 49]:
+                command(["docker", "exec", container, "ffmpeg", "-hide_banner", "-loglevel", "error", "-i", "/media/sintel.mp4", "-t", str(length), "-c", "copy", f"/media/sintel-{length}.mp4"])
         api("mutation($input:ScanMetadataInput!){metadataScan(input:$input)}", {
             "input": {"paths": ["/media"], "scanGenerateSprites": True,
                       "scanGenerateCovers": True, "scanGeneratePreviews": False,
@@ -122,12 +127,16 @@ plugins_path: /config/plugins
         })
         for _ in range(90):
             scanned = api("{findScenes{count}jobQueue{id}}")
-            if scanned['findScenes']['count'] == (2 if args.suite == 'mobile' else 1) and not scanned['jobQueue']:
+            expected = {"mobile": 2, "buffering": 5}.get(args.suite, 1)
+            if scanned['findScenes']['count'] == expected and not scanned['jobQueue']:
                 break
             time.sleep(1)
         else:
             raise RuntimeError("Sintel scan and preview generation did not finish")
-        source = (ROOT / {"plugin": "tests/plugin-browser.js", "mobile": "tests/mobile-browser.js", "playback": "tests/browser.js"}[args.suite]).read_text()
+        if args.suite in ["buffering", "mobile"]:
+            proxy = MediaProxy(port)
+            base_url = proxy.url
+        source = (ROOT / {"plugin": "tests/plugin-browser.js", "mobile": "tests/mobile-browser.js", "playback": "tests/browser.js", "buffering": "tests/buffering-browser.js"}[args.suite]).read_text()
         source = source.replace("export default ", "", 1)
         for browser in browsers:
             session = f"stash-tv-{token}-{browser}"
@@ -156,6 +165,8 @@ plugins_path: /config/plugins
             raise RuntimeError("Deleted scene left its original video file behind")
         print("PASS: " + str(report / "results.json"), flush=True)
     finally:
+        if proxy:
+            proxy.close()
         server.shutdown()
         server.server_close()
         if started:
@@ -168,6 +179,6 @@ plugins_path: /config/plugins
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--apply", action="store_true", help="Download the fixture and run isolated local integration tests")
-    parser.add_argument("--suite", choices=["playback", "plugin", "mobile"], default="playback")
+    parser.add_argument("--suite", choices=["playback", "plugin", "mobile", "buffering"], default="playback")
     parser.add_argument("--browser", choices=["chrome", "webkit"], action="append")
     run(parser.parse_args())

@@ -243,10 +243,8 @@ export default async function verifyMobile(page, options) {
     results.push({name:'hold restores the previous speed without changing the media source',passed:true});
     before = await sample();
     const nextScene=findScenes.scenes.find(scene=>scene.id!==before.scene).id;
-    const delayedURL='**/scene/'+nextScene+'/stream**';
-    let releaseDelayed;
-    const delayed=new Promise(resolve=>{releaseDelayed=resolve;});
-    await page.route(delayedURL,async route=>{await delayed;await route.continue();});
+    await page.evaluate(() => caches.delete('stash-tv-media-v1'));
+    await page.request.get(options.baseURL+'/_test/delay/'+nextScene);
     await touch('down',195,450); await touch('move',195,320);
     const drag=await page.evaluate(() => ({phase:document.querySelector('#player').dataset.swipePhase,
       offset:new DOMMatrix(getComputedStyle(document.querySelector('#video')).transform).m42,
@@ -285,11 +283,10 @@ export default async function verifyMobile(page, options) {
     check(handoff.phase==='loading' && handoff.outgoingHidden && handoff.incomingHidden===false &&
       handoff.offset===0 && handoff.ready==='false',
       'Swipe waited for the delayed stream before finishing its page transition: '+JSON.stringify(handoff));
-    releaseDelayed();
+    await page.request.get(options.baseURL+'/_test/delay/off');
     await page.waitForFunction(id=>new URL(location.href).searchParams.get('scene')!==id,before.scene);
     await ready();
     await settled();
-    await page.unroute(delayedURL);
     after=await sample();
     check(!after.paused && after.rate === 1,'Swipe next failed to play');
     await touch('down',195,320); await touch('move',195,450); await touch('up',195,450);
@@ -298,9 +295,8 @@ export default async function verifyMobile(page, options) {
     await settled();
     check(await page.locator('video').count()===1 && await page.locator('#swipe-outgoing').isHidden(),'Swipe left a second decoder or stale frame');
     results.push({name:'finger-following swipe and decoded-frame transition in both directions',passed:true});
-    let releaseReversal;
-    const reversal=new Promise(resolve=>{releaseReversal=resolve;});
-    await page.route(delayedURL,async route=>{await reversal;await route.continue();});
+    await page.evaluate(() => caches.delete('stash-tv-media-v1'));
+    await page.request.get(options.baseURL+'/_test/delay/'+nextScene);
     await touch('down',195,450); await touch('move',195,320); await touch('up',195,320);
     await page.waitForFunction(()=>document.querySelector('#player').dataset.swipePhase==='loading' &&
       document.querySelector('#swipe-incoming').width>0);
@@ -310,10 +306,9 @@ export default async function verifyMobile(page, options) {
     await touch('up',195,450);
     check(await page.locator('#swipe-outgoing').evaluate(el=>el.toDataURL())===loadingFrame,
       'Reversing a loading video replaced its outgoing frame with the destination');
-    releaseReversal();
+    await page.request.get(options.baseURL+'/_test/delay/off');
     await page.waitForFunction(id=>new URL(location.href).searchParams.get('scene')===id,before.scene);
     await ready(); await settled();
-    await page.unroute(delayedURL);
     check(!(await sample()).paused && await page.locator('#swipe-incoming').isHidden(),
       'Late stream response interrupted the reversed scene');
     results.push({name:'swipe reversal while loading keeps the visible frame and ignores the late stream',passed:true});
@@ -361,10 +356,8 @@ export default async function verifyMobile(page, options) {
     const moved=await page.screenshot({clip,path:options.reportDir+'/'+options.browser+'-reduced-motion-drag.png'});
     check(!stationary.equals(moved),'Reduced-motion drag changed styles without moving rendered video pixels');
     const otherScene=findScenes.scenes.find(scene=>scene.id!==before.scene).id;
-    let releaseStream;
-    const incoming=new Promise(resolve=>{releaseStream=resolve;});
-    const incomingURL='**/scene/'+otherScene+'/stream**';
-    await page.route(incomingURL,async route=>{await incoming;await route.continue();});
+    await page.evaluate(() => caches.delete('stash-tv-media-v1'));
+    await page.request.get(options.baseURL+'/_test/delay/'+otherScene);
     await touch('up',195,320);
     check(await page.evaluate(()=>document.querySelector('#player').dataset.swipePhase==='fading' &&
       !document.querySelector('#swipe-outgoing').hidden), 'Reduced-motion handoff discarded the outgoing frame');
@@ -372,10 +365,9 @@ export default async function verifyMobile(page, options) {
     await page.waitForTimeout(150);
     check(await page.locator('#swipe-incoming').isVisible() && await page.locator('#swipe-outgoing').isHidden(),
       'Reduced-motion fade waited for the delayed incoming stream');
-    releaseStream();
+    await page.request.get(options.baseURL+'/_test/delay/off');
     await page.waitForFunction(id=>new URL(location.href).searchParams.get('scene')!==id,before.scene);
     await ready(); await settled();
-    await page.unroute(incomingURL);
     check(await page.evaluate(()=>window.mobileEvents.some(e=>e.type==='transitionrun' &&
       e.target==='swipe-outgoing' && e.property==='opacity')),'Reduced-motion handoff did not fade its outgoing frame');
     check(await page.evaluate(()=>getComputedStyle(document.querySelector('#video')).transform==='none'),'Reduced motion still slides video');

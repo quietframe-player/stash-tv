@@ -49,7 +49,7 @@ Autoplay and fullscreen still follow your browser's user-gesture rules.
 
 Preview images use Stash's generated sprites. They are interval samples, marked `≈`,
 not frame-accurate predictions. After seeking, the preview can show the decoded frame.
-Generate sprites in Stash if previews are missing. No second video decoder runs for previews.
+Generate sprites in Stash if seek previews are missing.
 
 The player prefers the original stream and can fall back to compatible Stash streams.
 Codec support depends on the browser and device. If a WebM transcode reports a
@@ -69,11 +69,28 @@ changes speed on the current stream. Drag the seek bar in either direction, then
 release to seek; cancellation keeps the current playback position.
 
 During a vertical swipe, the current and incoming views follow your finger.
-Release completes the slide immediately while the next video loads. Neighboring
-scenes have their metadata and resume-position previews prepared in advance;
-returning to a watched scene reuses its last decoded frame. The preview stays visible
-until the video is ready at its saved position. A short or cancelled drag returns to
-the current video. The player keeps one video decoder and at most three cached stills.
+Release completes the slide immediately while the next video loads. Desktop vertical
+trackpad scrolling moves the same views directly. Crossing the navigation threshold
+advances one video; the remaining momentum stays in that gesture. Short or reversed
+drags return to the current video. Scrolling over controls does not change videos.
+
+The player prepares two videos ahead and one behind, in that order. For original MP4
+streams, it reads the index and buffers up to five seconds around the saved position,
+starting at the preceding keyframe. Preparation is serial, cancels obsolete work,
+and yields while the current video loads or seeks. Hidden pages stop preparation.
+A local service worker feeds the prepared ranges to the existing native video element.
+The cache holds at most four items, 16 MiB each and 64 MiB total, expires after ten
+minutes, and is cleared when the page closes. Stored cache keys hash the stream URL;
+the cache index does not persist its authorization parameters.
+
+A worker briefly decodes the exact checkpoint frame when WebCodecs supports the codec,
+then releases its decoder. Returning to a watched scene can reuse its last decoded
+frame at that same checkpoint. This frame stays visible until playback is ready at
+the saved position. If an exact frame is unavailable, the loading view stays blank.
+Other containers, oversized indexes, unsupported codecs, and browsers without service
+workers keep normal playback. Preparation never starts neighboring transcodes or
+changes video quality. Buffering requires HTTPS or localhost. There remains one
+native video element and at most four cached stills.
 With Reduce Motion enabled, dragging still follows your finger and release uses
 a short fade instead of a slide.
 
@@ -151,3 +168,8 @@ before relying on an older TV firmware.
 
 MIT. Icons in the player are [Lucide](https://lucide.dev/) under the ISC license, included in
 [`LUCIDE-LICENSE.txt`](plugins/stash-tv/web/LUCIDE-LICENSE.txt). The launcher uses Stash's bundled TV icon.
+
+The lazy MP4 parser is [MP4Box.js 2.4.1](https://github.com/gpac/mp4box.js), distributed
+under [BSD-3-Clause](plugins/stash-tv/web/MP4BOX-LICENSE.txt). Its pinned artifact can
+be rebuilt with Bun 1.4.0 using `python3 scripts/vendor_mp4box.py --apply`; ordinary
+plugin builds use the committed artifact and need no package installation.
