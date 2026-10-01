@@ -38,6 +38,7 @@ export default async function verifyMultiview(page, options) {
   const sample = () => page.evaluate(() => [...document.querySelectorAll("#views video")].map((video, index) => ({
     id: index ? video.parentElement.dataset.scene : new URL(location.href).searchParams.get("scene"),
     time: video.currentTime, paused: video.paused, muted: video.muted,
+    seeking: video.seeking, frames: video.getVideoPlaybackQuality?.().totalVideoFrames || 0,
     ready: video.readyState, error: video.error?.code || null,
     source: video.currentSrc.startsWith("blob:") ? "buffered" : "network",
     phase: video.parentElement.dataset.tilePhase,
@@ -45,7 +46,17 @@ export default async function verifyMultiview(page, options) {
   const progressing = async count => {
     await ready(count);
     const before = await sample();
-    await page.waitForTimeout(700);
+    try {
+      await page.waitForFunction(before => {
+        const videos = [...document.querySelectorAll("#views video")];
+        return videos.length === before.length && videos.every((video, index) => {
+          const id = index ? video.parentElement.dataset.scene : new URL(location.href).searchParams.get("scene");
+          return id === before[index].id && !video.paused && !video.seeking && video.currentTime > before[index].time + 0.25;
+        });
+      }, before, {timeout:5000});
+    } catch {
+      throw new Error("Videos did not advance within five seconds: " + JSON.stringify({before,after:await sample()}));
+    }
     const after = await sample();
     check(after.length === count && after.every((video, index) => video.id === before[index].id && video.time > before[index].time + 0.25),
       "Videos did not advance together: " + JSON.stringify({ before, after }));
@@ -323,10 +334,13 @@ export default async function verifyMultiview(page, options) {
     await page.waitForFunction(() => document.querySelectorAll("#views video").length === 1);
     results.push({ name: "layout buttons respond to keyboard activation", passed: true });
 
+    await page.goto("about:blank");
+    for (const id of ids) await api("mutation($id:ID!){sceneSaveActivity(id:$id,resume_time:3,playDuration:0)}", {id});
     const mobile = await page.context().browser().newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
     const desktop = page;
     try {
       page = await mobile.newPage();
+      page.on("pageerror", error => errors.push(error.message));
       await page.goto(options.baseURL + "/plugin/stash-tv/assets/index.html?autoplay=false&scene=" + ids[0] + "&seed=17");
       await page.waitForFunction(() => document.getElementById("player").dataset.videoReady === "true");
       await page.locator("#layout-four").tap();
@@ -359,10 +373,14 @@ export default async function verifyMultiview(page, options) {
       await page.locator("#layout-four").tap();
       await page.waitForFunction(() => document.querySelectorAll("#views video").length === 1);
       results.push({ name: "touch buttons start and exit four simultaneous videos in a portrait mobile browser", passed: true });
+    } catch (error) {
+      throw new Error("Mobile multiview: " + error.message + "; " + JSON.stringify({videos:await sample(),player:await page.locator("#player").evaluate(node => ({...node.dataset}))}));
     } finally { page = desktop; await mobile.close(); }
+    for (const id of ids) await api("mutation($id:ID!){sceneSaveActivity(id:$id,resume_time:3,playDuration:0)}", {id});
     const native = await page.context().browser().newContext({viewport:{width:1200,height:800},serviceWorkers:"block"});
     try {
       page = await native.newPage();
+      page.on("pageerror", error => errors.push(error.message));
       await page.goto(options.baseURL + "/plugin/stash-tv/assets/index.html?autoplay=false&scene=" + ids[0] + "&seed=17");
       await page.waitForFunction(() => document.getElementById("player").dataset.videoReady === "true");
       await click("#layout-four");
