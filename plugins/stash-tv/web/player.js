@@ -1108,6 +1108,7 @@ async function boot() {
     multiview?.suspend(document.hidden);
     multiview?.setPlaying(state.wantsPlay);
     multiview?.setCount(state.layout);
+    if (state.layout > 1 && [byId("layout-two"), byId("layout-four")].includes(document.activeElement)) multiview.focus();
     if (state.layout === 1) warmNeighbours();
   }
 

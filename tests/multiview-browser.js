@@ -11,8 +11,23 @@ export default async function verifyMultiview(page, options) {
     return body.data;
   };
   const click = async selector => {
+    if (["#layout-two", "#layout-four", "#fullscreen", ".multiview-toggle"].includes(selector))
+      await page.waitForFunction(() => (document.getElementById("player").dataset.layout || "1") === "1" || document.querySelector(".multiview-menu-toggle"));
     await page.mouse.move(10, 10);
+    if (["#layout-two", "#layout-four", "#fullscreen", ".multiview-toggle"].includes(selector) &&
+        await page.locator(".multiview-menu-toggle").count() &&
+        await page.locator(".multiview-menu").evaluate(panel => panel.hidden)) {
+      await page.locator(".multiview-menu-toggle").click();
+    }
     await page.locator(selector).click();
+  };
+  const tile = index => page.locator("#views > .view").nth(index);
+  const tileClick = async (index, action) => {
+    await tile(index).locator(".tile-surface").hover({ position: { x: 20, y: 20 } });
+    const target = tile(index).locator(".tile-" + action);
+    if (["previous", "next", "random"].includes(action) && !await target.isVisible())
+      await tile(index).locator(".tile-more").click();
+    await target.click();
   };
   const ready = count => page.waitForFunction(count => {
     const videos = [...document.querySelectorAll("#views video")];
@@ -48,12 +63,14 @@ export default async function verifyMultiview(page, options) {
         icons: [...document.querySelectorAll(".tile-controls .icon, .multiview-toolbar .icon")].filter(node => node.getClientRects().length).map(node => {
           const style = getComputedStyle(node); return {width: parseFloat(style.width), height: parseFloat(style.height)};
         }),
-        iconCounts: [...document.querySelectorAll(".tile-nav button")].map(button => [...button.querySelectorAll(".icon")].filter(icon => getComputedStyle(icon).display !== "none").length) };
+        footers: [...root.querySelectorAll(".tile-controls")].filter(node => node.getClientRects().length).length,
+        iconCounts: [...document.querySelectorAll(".tile-nav button")].filter(node => node.getClientRects().length).map(button => [...button.querySelectorAll(".icon")].filter(icon => getComputedStyle(icon).display !== "none").length) };
     });
     const area = value.views.reduce((total, view) => total + view.width * view.height, 0);
     check(value.views.length === count && Math.abs(area - value.root.width * value.root.height) < 1 && value.gap === "0px",
       "Grid has gaps: " + JSON.stringify(value));
     check(value.views.every(view => view.border === "0px" && view.fit === "cover"), "Tiles have borders or letterboxing");
+    check(value.footers === 1 && value.iconCounts.length === 4, "More than one tile control strip is visible");
     check(value.icons.every(icon => icon.width === 24 && icon.height === 24) && value.iconCounts.every(count => count === 1),
       "Icon sizes or states changed: " + JSON.stringify({icons:value.icons,counts:value.iconCounts}));
     return value;
@@ -83,6 +100,36 @@ export default async function verifyMultiview(page, options) {
     await page.screenshot({ path: options.reportDir + "/" + options.browser + "-multiview-four.png" });
     results.push({ name: "four distinct scenes decode and advance together without restarting the first two", passed: true, videos: four });
 
+    await tile(2).locator(".tile-surface").hover({position:{x:20,y:20}});
+    const selected = await page.evaluate(() => [...document.querySelectorAll("#views > .view")].map(node => ({
+      selected: node.dataset.selected, visible: getComputedStyle(node.querySelector(".tile-controls")).display !== "none",
+    })));
+    check(selected.every((view, index) => view.selected === String(index === 2) && view.visible === (index === 2)),
+      "Hovering a video left duplicated overlays: " + JSON.stringify(selected));
+    check((await sample()).every((video, index) => video.muted === four[index].muted), "Hovering changed the audio source");
+    await page.waitForFunction(() => document.getElementById("player").dataset.gridControls === "false" &&
+      document.querySelector('.view[data-selected="true"]').dataset.controls === "false");
+    await page.waitForFunction(() => getComputedStyle(document.querySelector(".multiview-toolbar")).opacity === "0" &&
+      getComputedStyle(document.querySelector('.view[data-selected="true"] .tile-controls')).opacity === "0");
+    results.push({ name: "only the hovered video shows four main controls and all overlays hide while idle without switching audio", passed: true });
+
+    await tile(1).locator(".tile-surface").hover({position:{x:20,y:20}});
+    await tile(1).locator(".tile-more").click();
+    check(await tile(1).locator(".tile-more-panel").isVisible(), "Navigation menu did not open");
+    await tile(1).locator(".tile-audio").click();
+    check(!await tile(1).locator(".tile-more-panel").isVisible() && await tile(1).locator(".tile-volume-panel").isVisible(),
+      "More and volume panels overlap");
+    await tile(1).locator(".tile-audio").click();
+    await tileClick(0, "audio");
+    await tileClick(0, "audio");
+    await click(".multiview-menu-toggle");
+    await page.waitForTimeout(2500);
+    check(await page.locator(".multiview-menu").isVisible() && await page.locator(".multiview-toolbar").evaluate(node => getComputedStyle(node).opacity === "1"),
+      "Open grid menu disappeared while reading its controls");
+    await page.keyboard.press("Escape");
+    check(!await page.locator(".multiview-menu").isVisible(), "Escape did not dismiss the grid menu");
+    results.push({ name: "navigation, volume and grid options are disclosed on demand and open menus remain usable", passed: true });
+
     await click(".multiview-toggle");
     await page.waitForFunction(() => [...document.querySelectorAll("#views video")].every(video => video.paused));
     const paused = await sample();
@@ -96,24 +143,19 @@ export default async function verifyMultiview(page, options) {
     await progressing(4);
     results.push({ name: "explicit group pause and resume affect every tile; independent seeking does not resume paused tiles", passed: true });
 
-    await click("#primary-view .tile-random");
+    await tileClick(0, "random");
     const shuffled = await progressing(4);
     check(shuffled[0].id !== four[0].id, "Random did not change the primary scene");
     results.push({ name: "primary Random changes only its own tile and preserves distinct scene IDs", passed: true, videos: shuffled });
 
-    await click("#primary-view .tile-previous");
+    await tileClick(0, "previous");
     const previous = await progressing(4);
     check(previous[0].id === four[0].id, "Previous did not return through shuffled history");
-    await click("#primary-view .tile-next");
+    await tileClick(0, "next");
     const navigated = await progressing(4);
     check(navigated[0].id === shuffled[0].id, "Next did not return to the shuffled primary scene");
     results.push({ name: "primary navigation preserves shuffled history and replaces colliding auxiliary scenes", passed: true });
 
-    const tile = index => page.locator("#views > .view").nth(index);
-    const tileClick = async (index, action) => {
-      await tile(index).locator(".tile-surface").hover({ position: { x: 20, y: 20 } });
-      await tile(index).locator(".tile-" + action).click();
-    };
     for (let index = 0; index < 4; index++) {
       const before = await sample();
       await tileClick(index, "toggle");
@@ -208,6 +250,14 @@ export default async function verifyMultiview(page, options) {
 
     await page.setViewportSize({ width: 390, height: 844 });
     await layout(4);
+    await page.setViewportSize({width:320,height:844});
+    await tile(3).locator(".tile-surface").hover({position:{x:20,y:20}});
+    const narrow = await page.evaluate(() => [...document.querySelectorAll('.view[data-selected="true"] .tile-nav button')].map(button => {
+      const b = button.getBoundingClientRect(), r = button.closest(".view").getBoundingClientRect();
+      return {inside:b.x >= r.x && b.right <= r.right && b.y >= r.y && b.bottom <= r.bottom,width:b.width,height:b.height};
+    }));
+    check(narrow.length === 4 && narrow.every(button => button.inside && button.width === 44 && button.height === 44),
+      "Selected controls overflow a narrow four-video portrait grid");
     await click("#layout-two");
     await progressing(2);
     const portrait = await layout(2);
@@ -267,6 +317,7 @@ export default async function verifyMultiview(page, options) {
     await page.locator("#layout-four").focus();
     await page.keyboard.press("Space");
     await progressing(4);
+    await click(".multiview-menu-toggle");
     await page.locator("#layout-four").focus();
     await page.keyboard.press("Enter");
     await page.waitForFunction(() => document.querySelectorAll("#views video").length === 1);
@@ -296,14 +347,15 @@ export default async function verifyMultiview(page, options) {
         await view.locator(".tile-toggle").tap();
         await progressing(4);
       }
-      const bounds = await page.evaluate(() => [...document.querySelectorAll(".tile-nav button")].map(button => {
+      const bounds = await page.evaluate(() => [...document.querySelectorAll(".tile-nav button")].filter(button => button.getClientRects().length).map(button => {
         const b = button.getBoundingClientRect(), r = button.closest(".view").getBoundingClientRect();
         return { inside: b.x >= r.x && b.right <= r.right && b.y >= r.y && b.bottom <= r.bottom,
           icons: [...button.querySelectorAll(".icon")].filter(icon => getComputedStyle(icon).display !== "none").map(icon => parseFloat(getComputedStyle(icon).width)) };
       }));
-      check(bounds.length === 24 && bounds.every(b => b.inside && b.icons.length === 1 && b.icons[0] === 24), "Portrait tile buttons or icons overlap their video");
+      check(bounds.length === 4 && bounds.every(b => b.inside && b.icons.length === 1 && b.icons[0] === 24), "Portrait tile buttons or icons overlap their video");
       await page.screenshot({ path: options.reportDir + "/" + options.browser + "-multiview-mobile-controls.png" });
       results.push({ name: "portrait touch surfaces, repeated seeking and playback controls work independently on all four videos", passed: true });
+      await page.locator(".multiview-menu-toggle").tap();
       await page.locator("#layout-four").tap();
       await page.waitForFunction(() => document.querySelectorAll("#views video").length === 1);
       results.push({ name: "touch buttons start and exit four simultaneous videos in a portrait mobile browser", passed: true });
@@ -326,7 +378,7 @@ export default async function verifyMultiview(page, options) {
       await page.waitForFunction(() => document.querySelectorAll("#views > .view")[1].dataset.tilePhase === "error");
       check(failures > 0, "The stream fault did not reach the network");
       await page.unroute("**/scene/*/stream*");
-      await page.locator("#views > .view").nth(1).locator(".tile-toggle").click();
+      await tileClick(1, "toggle");
       await page.waitForFunction(() => {
         const videos = [...document.querySelectorAll("#views video")];
         return videos[1].readyState >= 2 && !videos[1].paused && !videos[1].seeking &&

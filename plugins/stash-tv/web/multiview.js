@@ -13,15 +13,35 @@ export function createMultiview(options) {
   const slots = [];
   let defaultPlaying = false;
   let suspended = false;
-  let primaryControls = null, toolbar = null;
+  let primaryControls = null, toolbar = null, closeGridMenu = null;
+  let selected = null;
   const layoutHomes = options.layoutButtons.map(button => ({ button, parent: button.parentNode, next: button.nextSibling }));
   const controlOptions = {
     ...options.controls,
+    activate: select,
+    visibility(node, visible) {
+      if (node === selected) options.root.parentNode.dataset.gridControls = String(visible);
+    },
     selectAudio(video) {
       for (const other of [options.primaryController.video, ...slots.map(slot => slot.video)]) other.muted = other !== video;
       if (video.volume === 0) video.volume = 1;
     },
   };
+
+  function controls() {
+    return [{node:options.primaryController.node,ui:primaryControls}, ...slots.map(slot => ({node:slot.node,ui:slot.controls}))];
+  }
+  function selectedControls() { return controls().find(entry => entry.node === selected)?.ui; }
+  function select(node) {
+    if (selected === node) return;
+    closeGridMenu?.();
+    selected = node;
+    for (const entry of controls()) {
+      entry.node.dataset.selected = String(entry.node === node);
+      if (entry.node !== node) entry.ui?.dismiss();
+    }
+    selectedControls()?.show();
+  }
 
   function groupPlaying(value) {
     options.primaryController.setPlaying(value);
@@ -40,25 +60,70 @@ export function createMultiview(options) {
   }
   function mountPrimary() {
     if (primaryControls) return;
+    selected = options.primaryController.node;
+    selected.dataset.selected = "true";
     primaryControls = mountTileControls(options.primaryController, controlOptions);
     toolbar = document.createElement("div");
     toolbar.className = "multiview-toolbar";
     toolbar.setAttribute("role", "group");
     toolbar.setAttribute("aria-label", "Multiview layout and group playback");
+    const menu = document.createElement("button");
+    menu.type = "button";
+    menu.className = "multiview-menu-toggle";
+    menu.setAttribute("aria-label", "Multiview options");
+    menu.setAttribute("aria-expanded", "false");
+    menu.appendChild(options.layoutButtons[1].querySelector("svg").cloneNode(true));
+    const panel = document.createElement("div");
+    panel.className = "multiview-menu";
+    panel.hidden = true;
+    closeGridMenu = () => {
+      panel.hidden = true;
+      menu.setAttribute("aria-expanded", "false");
+      options.root.parentNode.dataset.gridMenu = "false";
+    };
+    menu.onclick = () => {
+      panel.hidden = !panel.hidden;
+      menu.setAttribute("aria-expanded", String(!panel.hidden));
+      options.root.parentNode.dataset.gridMenu = String(!panel.hidden);
+      if (!panel.hidden) menu.focus({preventScroll:true});
+      selectedControls()?.show();
+    };
     const toggle = document.createElement("button");
     toggle.type = "button";
     toggle.className = "multiview-toggle";
     toggle.append(options.controls.icon("play"), options.controls.icon("pause"));
     toggle.onclick = toggleAll;
-    toolbar.append(toggle, ...options.layoutButtons);
+    panel.append(toggle, ...options.layoutButtons);
+    panel.onclick = event => {
+      if (!event.target.closest("button")) return;
+      closeGridMenu?.(); selectedControls()?.focus();
+    };
+    toolbar.append(menu, panel);
+    toolbar.addEventListener("focusin", () => selectedControls()?.show());
+    toolbar.addEventListener("pointermove", () => selectedControls()?.show());
+    toolbar.addEventListener("keydown", event => {
+      if (event.key === "Escape" && !panel.hidden) {
+        event.preventDefault(); event.stopPropagation(); closeGridMenu?.(); menu.focus();
+      }
+    });
     options.root.parentNode.appendChild(toolbar);
+    document.addEventListener("pointerdown", dismissGridMenu);
     options.primaryController.video.addEventListener("playing", renderGroup);
     options.primaryController.video.addEventListener("pause", renderGroup);
     renderGroup();
   }
+  function dismissGridMenu(event) {
+    if (!toolbar?.contains(event.target)) closeGridMenu?.();
+  }
   function unmountPrimary() {
     if (!primaryControls) return;
     primaryControls.dispose(); primaryControls = null;
+    selected = null;
+    delete options.primaryController.node.dataset.selected;
+    delete options.root.parentNode.dataset.gridControls;
+    delete options.root.parentNode.dataset.gridMenu;
+    document.removeEventListener("pointerdown", dismissGridMenu);
+    closeGridMenu = null;
     options.primaryController.video.removeEventListener("playing", renderGroup);
     options.primaryController.video.removeEventListener("pause", renderGroup);
     for (const { button, parent, next } of [...layoutHomes].reverse()) parent.insertBefore(button, next?.parentNode === parent ? next : null);
@@ -199,6 +264,7 @@ export function createMultiview(options) {
   function mount() {
     const node = document.createElement("div");
     node.className = "view extra-view";
+    node.dataset.selected = "false";
     const video = document.createElement("video");
     video.playsInline = true;
     video.muted = video.defaultMuted = true;
@@ -313,6 +379,7 @@ export function createMultiview(options) {
 
   function unmount(slot, keepalive) {
     save(slot, keepalive);
+    if (selected === slot.node) select(options.primaryController.node);
     if (!slot.video.muted && slot.video.volume > 0) controlOptions.selectAudio(options.primaryController.video);
     slot.controls.dispose();
     ++slot.generation;
@@ -340,6 +407,7 @@ export function createMultiview(options) {
   const progress = setInterval(() => slots.forEach(slot => save(slot)), 15000);
   return {
     toggleAll,
+    focus() { selectedControls()?.focus(); },
     setCount(count) {
       if (count > 1) mountPrimary();
       else unmountPrimary();

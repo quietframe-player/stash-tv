@@ -38,7 +38,14 @@ export function mountTileControls(controller, options) {
   const random = button("random", "Random video in this tile", ["shuffle"]);
   const audio = button("audio", "Volume for this video", ["volume-2", "volume-x"]);
   const fullscreen = button("fullscreen", "Fullscreen this video", ["maximize", "minimize"]);
-  nav.append(previous, toggle, next, random, audio, fullscreen);
+  const more = button("more", "More controls for this video", ["ellipsis"]);
+  more.setAttribute("aria-expanded", "false");
+  const actions = element("div", "tile-more-panel");
+  actions.hidden = true;
+  actions.setAttribute("role", "group");
+  actions.setAttribute("aria-label", "Video navigation");
+  actions.append(previous, random, next);
+  nav.append(toggle, audio, fullscreen, more);
   const panel = element("div", "tile-volume-panel");
   panel.hidden = true;
   const mute = button("mute", "Mute this video", ["volume-2", "volume-x"]);
@@ -47,14 +54,24 @@ export function mountTileControls(controller, options) {
   volume.setAttribute("aria-label", "Volume for this video");
   panel.append(mute, volume);
   audio.setAttribute("aria-expanded", "false");
-  footer.append(timeline, nav, panel);
+  footer.append(timeline, nav, panel, actions);
   node.append(surface, footer);
 
   function show() {
     clearTimeout(hideTimer);
     node.dataset.controls = "true";
-    if (!video.paused && panel.hidden && pointer === null && !footer.contains(document.activeElement))
-      hideTimer = setTimeout(() => { node.dataset.controls = "false"; }, 2200);
+    options.visibility(node, true);
+    if (!video.paused && panel.hidden && actions.hidden && pointer === null)
+      hideTimer = setTimeout(() => { node.dataset.controls = "false"; options.visibility(node, false); }, 2200);
+  }
+  function closePanels() {
+    panel.hidden = actions.hidden = true;
+    audio.setAttribute("aria-expanded", "false");
+    more.setAttribute("aria-expanded", "false");
+  }
+  function activate() {
+    options.activate(node);
+    show();
   }
   function label(button, value) {
     button.setAttribute("aria-label", value);
@@ -83,14 +100,21 @@ export function mountTileControls(controller, options) {
     node.dataset.tileFullscreen = String(!!full);
     label(fullscreen, full ? "Exit fullscreen" : "Fullscreen this video");
   }
-  function togglePlayback() { controller.setPlaying(controller.snapshot().error || video.paused); show(); render(); }
+  function togglePlayback() { activate(); controller.setPlaying(controller.snapshot().error || video.paused); show(); render(); }
   listen(surface, "click", togglePlayback);
   listen(toggle, "click", togglePlayback);
-  listen(previous, "click", () => { controller.navigate(-1); show(); });
-  listen(next, "click", () => { controller.navigate(1); show(); });
-  listen(random, "click", () => { controller.random(); show(); });
+  listen(previous, "click", () => { closePanels(); controller.navigate(-1); show(); });
+  listen(next, "click", () => { closePanels(); controller.navigate(1); show(); });
+  listen(random, "click", () => { closePanels(); controller.random(); show(); });
+  listen(more, "click", () => {
+    const open = actions.hidden;
+    closePanels(); actions.hidden = !open;
+    more.setAttribute("aria-expanded", String(open));
+    show();
+  });
   listen(audio, "click", () => {
-    panel.hidden = !panel.hidden;
+    const open = panel.hidden;
+    closePanels(); panel.hidden = !open;
     audio.setAttribute("aria-expanded", String(!panel.hidden));
     if (!panel.hidden && (video.muted || video.volume === 0)) options.selectAudio(video);
     show(); render();
@@ -161,14 +185,18 @@ export function mountTileControls(controller, options) {
   listen(seek, "lostpointercapture", () => finish(false));
   listen(seek, "input", () => { preview(Number(seek.value)); show(); });
   listen(seek, "change", () => { if (pointer === null) controller.seek(Number(seek.value)); });
+  listen(node, "pointerenter", event => { if (event.pointerType === "mouse") activate(); });
   listen(node, "pointermove", show);
-  listen(node, "pointerdown", show);
-  listen(footer, "focusin", show);
+  listen(node, "pointerdown", activate);
+  listen(node, "focusin", activate);
   listen(footer, "focusout", show);
+  listen(document, "pointerdown", event => { if (!footer.contains(event.target)) closePanels(); });
   listen(node, "keydown", event => {
     if (event.ctrlKey || event.metaKey || event.altKey) return;
-    if (event.key === "Escape" && !panel.hidden) {
-      panel.hidden = true; audio.setAttribute("aria-expanded", "false"); show();
+    activate();
+    if (event.key === "Escape" && (!panel.hidden || !actions.hidden)) {
+      const focus = !actions.hidden ? more : audio;
+      closePanels(); focus.focus(); show();
       event.stopPropagation(); return;
     }
     if (event.target.tagName === "INPUT" ||
@@ -199,14 +227,16 @@ export function mountTileControls(controller, options) {
     video.volume = value; video.muted = value === 0;
   }
   for (const event of ["timeupdate", "durationchange", "loadedmetadata", "playing", "pause", "waiting", "seeking", "seeked", "canplay", "volumechange", "emptied", "error"]) {
-    listen(video, event, () => { render(); if (video.paused) show(); });
+    listen(video, event, () => { render(); if (video.paused || event === "playing") show(); });
   }
   for (const event of ["fullscreenchange", "webkitfullscreenchange"]) listen(document, event, render);
   for (const event of ["webkitbeginfullscreen", "webkitendfullscreen"]) listen(video, event, render);
   listen(window, "blur", () => finish(false));
   render(); show();
   return {
-    render,
+    render, show,
+    focus() { surface.focus({preventScroll:true}); },
+    dismiss() { closePanels(); finish(false); clearTimeout(hideTimer); node.dataset.controls = "false"; },
     dispose() {
       finish(false); clearTimeout(hideTimer);
       disposers.forEach(dispose => dispose());

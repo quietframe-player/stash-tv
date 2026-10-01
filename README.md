@@ -38,10 +38,11 @@ Click the selected layout button again to return to a single video. Two videos s
 each other in landscape and stack in portrait. Four videos fill a 2×2 grid. Tiles have
 no gaps or borders and crop their edges to fill the available space.
 
-Each tile has its own play/pause button, seek bar, Previous, Next, Random, volume,
-and fullscreen controls. Tap a video to pause only that tile. Each feed keeps its own
-navigation history. Choose a tile's volume button to hear its audio; the other tiles mute.
-The top toolbar pauses or resumes all videos and changes the grid layout. When an extra
+Hover, tap, or focus a video to reveal its controls; the other videos stay clear.
+The selected tile has a seek bar and four icons: play/pause, volume, fullscreen, and More.
+Previous, Random, and Next are inside More, and each feed keeps its own navigation history.
+Tap a video to pause only that tile. Choose its volume button to hear its audio; the other tiles mute.
+One grid menu pauses or resumes all videos and changes the layout. Controls fade away during playback. When an extra
 video ends, its tile picks another random scene. All tiles save their playback positions in Stash.
 Keyboard shortcuts apply to the focused tile. Permanent deletion is available in single view.
 
@@ -49,7 +50,7 @@ Extra streams load only while multiview is selected and unload when you return t
 view. Neighbor preparation pauses during multiview to give the playing videos bandwidth.
 Simultaneous playback depends on your device's video decoders and the available network
 and Stash streaming capacity.
-Use a tile's fullscreen button to expand that video and return to the grid when you exit. On iPhone, the tile uses native video fullscreen when page fullscreen is unavailable. The toolbar's fullscreen button expands the whole grid on supported browsers.
+Use a tile's fullscreen button to expand that video and return to the grid when you exit. On iPhone, the tile uses native video fullscreen when page fullscreen is unavailable. The grid menu's fullscreen button expands the whole grid on supported browsers.
 
 | Key | Action |
 | --- | --- |
