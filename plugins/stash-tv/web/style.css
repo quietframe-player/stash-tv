@@ -51,7 +51,12 @@ body,
 #player[data-layout="2"] .view video,
 #player[data-layout="4"] .view video,
 #player[data-layout="2"] .view canvas,
-#player[data-layout="4"] .view canvas { object-fit: cover; }
+#player[data-layout="4"] .view canvas {
+  object-fit: cover;
+  object-position: center !important;
+  transform: scale(var(--frame-scale, 1)) !important;
+  transform-origin: center;
+}
 @media (orientation: portrait) {
   #player[data-layout="2"] #views {
     grid-template-columns: minmax(0, 1fr);
@@ -218,7 +223,9 @@ body,
 .view:fullscreen,
 .view:-webkit-full-screen { width: 100vw; height: 100vh; background: #000; }
 .view:fullscreen video,
-.view:-webkit-full-screen video { object-fit: contain !important; }
+.view:-webkit-full-screen video,
+.view:fullscreen canvas,
+.view:-webkit-full-screen canvas { object-fit: contain !important; transform: none !important; }
 @media (max-width: 600px) {
   #player[data-layout="4"] .tile-controls { padding: 24px 8px 6px; }
   .tile-controls { padding-bottom: max(8px, env(safe-area-inset-bottom)); }

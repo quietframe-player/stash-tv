@@ -86,6 +86,20 @@ export default async function verifyMultiview(page, options) {
       "Icon sizes or states changed: " + JSON.stringify({icons:value.icons,counts:value.iconCounts}));
     return value;
   };
+  const filled = async count => {
+    await page.waitForFunction(count => {
+      const views = [...document.querySelectorAll("#views > .view")];
+      return views.length === count && views.every(view => Number(view.style.getPropertyValue("--frame-scale")) > 1.2);
+    }, count, {timeout:5000});
+    const pixels = await page.evaluate(() => [...document.querySelectorAll("#views > .view")].map(view => {
+      const video = view.querySelector("video"), tile = view.getBoundingClientRect(), image = video.getBoundingClientRect();
+      const height = Math.max(image.width / video.videoWidth, image.height / video.videoHeight) * video.videoHeight;
+      const padding = height * 58 / 480;
+      return {top:tile.height/2-height/2+padding,bottom:tile.height/2+height/2-padding,tileHeight:tile.height};
+    }));
+    check(pixels.every(frame => frame.top <= 0 && frame.bottom >= frame.tileHeight),
+      "Encoded letterbox padding still falls inside a tile: " + JSON.stringify(pixels));
+  };
   try {
     const { findScenes } = await api('{findScenes(filter:{sort:"random_17",direction:DESC,per_page:-1}){scenes{id files{path}}}}');
     check(findScenes.scenes.length === 5 && findScenes.scenes.every(scene => scene.files[0].path.startsWith("/media/sintel")), "Expected five isolated Sintel fixtures");
@@ -106,10 +120,12 @@ export default async function verifyMultiview(page, options) {
     await click("#layout-four");
     const four = await progressing(4);
     const grid = await layout(4);
+    await filled(4);
     check(four[0].id === two[0].id && four[1].id === two[1].id, "Expanding the layout restarted existing tiles");
     check(grid.views[0].right === grid.views[1].x && grid.views[0].bottom === grid.views[2].y && grid.views[2].right === grid.views[3].x, "Four videos are not in a seamless 2x2 grid");
     await page.screenshot({ path: options.reportDir + "/" + options.browser + "-multiview-four.png" });
     results.push({ name: "four distinct scenes decode and advance together without restarting the first two", passed: true, videos: four });
+    results.push({ name: "encoded black padding is cropped so the actual pictures meet at the tile boundaries", passed: true });
 
     await tile(2).locator(".tile-surface").hover({position:{x:20,y:20}});
     const selected = await page.evaluate(() => [...document.querySelectorAll("#views > .view")].map(node => ({
@@ -261,6 +277,7 @@ export default async function verifyMultiview(page, options) {
 
     await page.setViewportSize({ width: 390, height: 844 });
     await layout(4);
+    await filled(4);
     await page.setViewportSize({width:320,height:844});
     await tile(3).locator(".tile-surface").hover({position:{x:20,y:20}});
     const narrow = await page.evaluate(() => [...document.querySelectorAll('.view[data-selected="true"] .tile-nav button')].map(button => {
@@ -272,6 +289,7 @@ export default async function verifyMultiview(page, options) {
     await click("#layout-two");
     await progressing(2);
     const portrait = await layout(2);
+    await filled(2);
     check(portrait.views[0].bottom === portrait.views[1].y && portrait.views[0].x === portrait.views[1].x, "Two portrait videos do not stack seamlessly");
     for (const width of [320, 390, 430]) {
       await page.setViewportSize({ width, height: 844 });
@@ -346,6 +364,7 @@ export default async function verifyMultiview(page, options) {
       await page.locator("#layout-four").tap();
       await progressing(4);
       await layout(4);
+      await filled(4);
       for (let index = 0; index < 4; index++) {
         const view = page.locator("#views > .view").nth(index);
         await view.locator(".tile-surface").tap();
@@ -368,6 +387,10 @@ export default async function verifyMultiview(page, options) {
       }));
       check(bounds.length === 4 && bounds.every(b => b.inside && b.icons.length === 1 && b.icons[0] === 24), "Portrait tile buttons or icons overlap their video");
       await page.screenshot({ path: options.reportDir + "/" + options.browser + "-multiview-mobile-controls.png" });
+      await page.waitForFunction(() => document.getElementById("player").dataset.gridControls === "false" &&
+        getComputedStyle(document.querySelector(".multiview-toolbar")).opacity === "0" &&
+        getComputedStyle(document.querySelector('.view[data-selected="true"] .tile-controls')).opacity === "0");
+      await page.screenshot({ path: options.reportDir + "/" + options.browser + "-multiview-mobile-edge-to-edge.png" });
       results.push({ name: "portrait touch surfaces, repeated seeking and playback controls work independently on all four videos", passed: true });
       await page.locator(".multiview-menu-toggle").tap();
       await page.locator("#layout-four").tap();

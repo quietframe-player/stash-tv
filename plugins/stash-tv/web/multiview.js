@@ -1,4 +1,5 @@
 import { mountTileControls } from "./tile-controls.js";
+import { mountFrameFill } from "./frame-fill.js";
 
 export function randomScenes(ids, count, excluded, random = Math.random) {
   const pool = [...new Set(ids)].filter(id => !excluded.includes(id));
@@ -13,7 +14,7 @@ export function createMultiview(options) {
   const slots = [];
   let defaultPlaying = false;
   let suspended = false;
-  let primaryControls = null, toolbar = null, closeGridMenu = null;
+  let primaryControls = null, primaryFill = null, toolbar = null, closeGridMenu = null;
   let selected = null;
   const layoutHomes = options.layoutButtons.map(button => ({ button, parent: button.parentNode, next: button.nextSibling }));
   const controlOptions = {
@@ -63,6 +64,7 @@ export function createMultiview(options) {
     selected = options.primaryController.node;
     selected.dataset.selected = "true";
     primaryControls = mountTileControls(options.primaryController, controlOptions);
+    primaryFill = mountFrameFill(selected, options.primaryController.video);
     toolbar = document.createElement("div");
     toolbar.className = "multiview-toolbar";
     toolbar.setAttribute("role", "group");
@@ -118,6 +120,7 @@ export function createMultiview(options) {
   function unmountPrimary() {
     if (!primaryControls) return;
     primaryControls.dispose(); primaryControls = null;
+    primaryFill.dispose(); primaryFill = null;
     selected = null;
     delete options.primaryController.node.dataset.selected;
     delete options.root.parentNode.dataset.gridControls;
@@ -183,6 +186,7 @@ export function createMultiview(options) {
         return;
       }
       slot.node.dataset.decoded = "true";
+      slot.fill?.refresh();
       slot.cover.hidden = true;
     }
     if ((!slot.wantsPlay && video.paused) || !video.requestVideoFrameCallback) reveal();
@@ -283,7 +287,7 @@ export function createMultiview(options) {
     node.append(video, cover, loader, retry);
     options.root.appendChild(node);
     const slot = { node, video, cover, retry, id: "", scene: null, index: 0, generation: 0,
-      wantsPlay: defaultPlaying, history: [], cursor: -1, controls: null,
+      wantsPlay: defaultPlaying, history: [], cursor: -1, controls: null, fill: mountFrameFill(node,video),
       offset: 0, resume: 0, url: "", phase: "loading", counted: false, playedAt: 0, timer: 0, frame: 0 };
     retry.onclick = () => retrySlot(slot);
     video.addEventListener("loadedmetadata", () => {
@@ -382,6 +386,7 @@ export function createMultiview(options) {
     if (selected === slot.node) select(options.primaryController.node);
     if (!slot.video.muted && slot.video.volume > 0) controlOptions.selectAudio(options.primaryController.video);
     slot.controls.dispose();
+    slot.fill.dispose();
     ++slot.generation;
     cancelFrame(slot);
     clearTimeout(slot.timer);
@@ -416,6 +421,7 @@ export function createMultiview(options) {
         const slot = mount();
         replacement(slot);
       }
+      primaryFill?.refresh(); slots.forEach(slot => slot.fill.refresh());
     },
     setPlaying,
     suspend(value) {

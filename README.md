@@ -37,6 +37,8 @@ The split-screen and grid buttons play **two or four distinct random videos** to
 Click the selected layout button again to return to a single video. Two videos sit beside
 each other in landscape and stack in portrait. Four videos fill a 2×2 grid. Tiles have
 no gaps or borders and crop their edges to fill the available space.
+Encoded black padding is detected from a few small frame samples and cropped in the grid,
+so letterboxed source videos also meet at the tile edges without stretching the picture.
 
 Hover, tap, or focus a video to reveal its controls; the other videos stay clear.
 The selected tile has a seek bar and four icons: play/pause, volume, fullscreen, and More.
