@@ -836,6 +836,8 @@ async function boot() {
     video.play().catch(function (error) {
       if (generation !== state.generation || error.name === "AbortError") return;
       if (error.name === "NotAllowedError") {
+        state.wantsPlay = false;
+        presentFrame();
         phase("ready", "Press Play to start.");
         showControls();
       }
@@ -1312,7 +1314,7 @@ async function boot() {
   function presentFrame() {
     if (video.seeking || video.readyState < 2 || state.resume) return;
     player.dataset.frameDecoded = "true";
-    if (video.paused || !video.requestVideoFrameCallback) {
+    if ((video.paused && !state.wantsPlay) || (!video.paused && !video.requestVideoFrameCallback)) {
       if (readyFrame) video.cancelVideoFrameCallback(readyFrame);
       readyFrame = 0;
       player.dataset.videoReady = "true";
@@ -1762,6 +1764,7 @@ async function boot() {
   video.addEventListener("playing", onPlaying);
   video.addEventListener("pause", function () {
     if (touch && touch.phase === "holding") cancelTouch();
+    if (!state.wantsPlay && state.scene && video.currentSrc === state.sourceURL) presentFrame();
     if (state.phase !== "playing") return;
     saveProgress();
     phase("paused", "Paused");
