@@ -160,6 +160,19 @@ export default async function verifyMultiview(page, options) {
     await page.keyboard.press("Space");
     results.push({ name: "keyboard seek and pause/play follow the focused tile without leaking to the primary", passed: true });
 
+    await page.route("**/scene/*/stream*", route => route.fulfill({ status: 503, body: "Temporary fixture stream failure" }));
+    await tile(1).locator("video").evaluate(video => video.load());
+    await page.waitForFunction(() => document.querySelectorAll("#views > .view")[1].dataset.tilePhase === "error");
+    await page.unroute("**/scene/*/stream*");
+    await tileClick(1, "toggle");
+    await page.waitForFunction(() => {
+      const videos = [...document.querySelectorAll("#views video")];
+      return videos[1].readyState >= 2 && !videos[1].paused && !videos[1].seeking &&
+        videos.every((video, index) => index === 1 || video.paused);
+    });
+    await tileClick(1, "toggle");
+    results.push({ name: "a failed real stream retries from its own playback button without resuming the other videos", passed: true });
+
     await tileClick(2, "audio");
     await tile(2).locator(".tile-volume").evaluate(input => { input.value = "0.4"; input.dispatchEvent(new Event("input", { bubbles: true })); });
     const audio = await page.evaluate(() => [...document.querySelectorAll("#views video")].map(video => ({ muted: video.muted, volume: video.volume })));
@@ -222,9 +235,12 @@ export default async function verifyMultiview(page, options) {
 
     await page.evaluate(() => { window.retired = [...document.querySelectorAll(".extra-view video")]; });
     const retired = (await sample())[1];
+    await tileClick(1, "audio");
+    check((await sample())[0].muted && !(await sample())[1].muted, "Audio did not select the departing feed");
     await click("#layout-two");
     await page.waitForFunction(() => document.querySelectorAll("#views video").length === 1 && window.retired.every(video => video.paused && !video.getAttribute("src") && video.readyState === 0));
     check((await page.locator("#layout-two").getAttribute("aria-pressed")) === "false", "Active layout did not toggle back to single");
+    check(!(await sample())[0].muted, "Removing the selected audio feed left single playback silent");
     results.push({ name: "returning to single unloads auxiliary decoders and streams", passed: true });
     let saved;
     for (let attempt = 0; attempt < 10; attempt++) {

@@ -95,6 +95,12 @@ export function createMultiview(options) {
     slot.controls?.render();
   }
 
+  function retrySlot(slot) {
+    if (!slot.scene) load(slot, slot.id);
+    else if (slot.retry.dataset.action === "play") { slot.phase = "ready"; slot.retry.hidden = true; play(slot); }
+    else source(slot, slot.index, slot.video.currentTime + slot.offset || slot.resume);
+  }
+
   function cancelFrame(slot) {
     if (slot.frame) slot.video.cancelVideoFrameCallback(slot.frame);
     slot.frame = 0;
@@ -213,11 +219,7 @@ export function createMultiview(options) {
     const slot = { node, video, cover, retry, id: "", scene: null, index: 0, generation: 0,
       wantsPlay: defaultPlaying, history: [], cursor: -1, controls: null,
       offset: 0, resume: 0, url: "", phase: "loading", counted: false, playedAt: 0, timer: 0, frame: 0 };
-    retry.onclick = () => {
-      if (!slot.scene) load(slot, slot.id);
-      else if (retry.dataset.action === "play") { slot.phase = "ready"; slot.retry.hidden = true; play(slot); }
-      else source(slot, slot.index, video.currentTime + slot.offset || slot.resume);
-    };
+    retry.onclick = () => retrySlot(slot);
     video.addEventListener("loadedmetadata", () => {
       if (slot.scene && video.currentSrc === slot.url && slot.resume) {
         video.currentTime = slot.resume;
@@ -280,11 +282,8 @@ export function createMultiview(options) {
       setPlaying(value) {
         slot.wantsPlay = value;
         if (value) {
-          if (slot.phase === "error") {
-            if (!slot.scene) load(slot, slot.id);
-            else { slot.phase = "ready"; slot.retry.hidden = true; }
-          }
-          play(slot);
+          if (slot.phase === "error") retrySlot(slot);
+          else play(slot);
         } else { video.pause(); present(slot); }
       },
       seek(seconds) {
@@ -314,6 +313,7 @@ export function createMultiview(options) {
 
   function unmount(slot, keepalive) {
     save(slot, keepalive);
+    if (!slot.video.muted && slot.video.volume > 0) controlOptions.selectAudio(options.primaryController.video);
     slot.controls.dispose();
     ++slot.generation;
     cancelFrame(slot);
@@ -330,11 +330,8 @@ export function createMultiview(options) {
     slots.forEach(slot => {
       slot.wantsPlay = value;
       if (value && !suspended) {
-        if (slot.phase === "error" && slot.retry.dataset.action === "play") {
-          slot.phase = "ready";
-          slot.retry.hidden = true;
-        }
-        play(slot);
+        if (slot.phase === "error") retrySlot(slot);
+        else play(slot);
       } else { slot.video.pause(); present(slot); }
     });
     renderGroup();

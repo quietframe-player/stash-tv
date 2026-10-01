@@ -65,7 +65,7 @@ export function mountTileControls(controller, options) {
     node.dataset.tilePhase = state.loading ? "loading" : state.error ? "error" : video.paused ? "paused" : "playing";
     node.dataset.muted = String(video.muted || video.volume === 0);
     seek.disabled = !state.duration || state.error;
-    toggle.disabled = state.unavailable;
+    toggle.disabled = state.unavailable && !state.error;
     previous.disabled = !state.previous;
     next.disabled = !state.next;
     random.disabled = state.unavailable;
@@ -83,7 +83,7 @@ export function mountTileControls(controller, options) {
     node.dataset.tileFullscreen = String(!!full);
     label(fullscreen, full ? "Exit fullscreen" : "Fullscreen this video");
   }
-  function togglePlayback() { controller.setPlaying(video.paused); show(); render(); }
+  function togglePlayback() { controller.setPlaying(controller.snapshot().error || video.paused); show(); render(); }
   listen(surface, "click", togglePlayback);
   listen(toggle, "click", togglePlayback);
   listen(previous, "click", () => { controller.navigate(-1); show(); });
