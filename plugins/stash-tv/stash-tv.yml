@@ -1,6 +1,6 @@
 name: Stash TV
 description: A lightweight fullscreen player for TV remotes and desktop browsers.
-version: 0.4.2
+version: 0.4.3
 url: https://github.com/quietframe-player/stash-tv
 ui:
   javascript:
