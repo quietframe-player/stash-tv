@@ -23,6 +23,9 @@ export default async function verifyMultiview(page, options) {
   const sample = () => page.evaluate(() => [...document.querySelectorAll("#views video")].map((video, index) => ({
     id: index ? video.parentElement.dataset.scene : new URL(location.href).searchParams.get("scene"),
     time: video.currentTime, paused: video.paused, muted: video.muted,
+    ready: video.readyState, error: video.error?.code || null,
+    source: video.currentSrc.startsWith("blob:") ? "buffered" : "network",
+    phase: video.parentElement.dataset.tilePhase,
   })));
   const progressing = async count => {
     await ready(count);
@@ -159,19 +162,6 @@ export default async function verifyMultiview(page, options) {
     check((await sample()).every((video, index) => video.paused === (index !== 2)), "Keyboard pause/play did not target focused tile");
     await page.keyboard.press("Space");
     results.push({ name: "keyboard seek and pause/play follow the focused tile without leaking to the primary", passed: true });
-
-    await page.route("**/scene/*/stream*", route => route.fulfill({ status: 503, body: "Temporary fixture stream failure" }));
-    await tile(1).locator("video").evaluate(video => video.load());
-    await page.waitForFunction(() => document.querySelectorAll("#views > .view")[1].dataset.tilePhase === "error");
-    await page.unroute("**/scene/*/stream*");
-    await tileClick(1, "toggle");
-    await page.waitForFunction(() => {
-      const videos = [...document.querySelectorAll("#views video")];
-      return videos[1].readyState >= 2 && !videos[1].paused && !videos[1].seeking &&
-        videos.every((video, index) => index === 1 || video.paused);
-    });
-    await tileClick(1, "toggle");
-    results.push({ name: "a failed real stream retries from its own playback button without resuming the other videos", passed: true });
 
     await tileClick(2, "audio");
     await tile(2).locator(".tile-volume").evaluate(input => { input.value = "0.4"; input.dispatchEvent(new Event("input", { bubbles: true })); });
@@ -318,6 +308,32 @@ export default async function verifyMultiview(page, options) {
       await page.waitForFunction(() => document.querySelectorAll("#views video").length === 1);
       results.push({ name: "touch buttons start and exit four simultaneous videos in a portrait mobile browser", passed: true });
     } finally { page = desktop; await mobile.close(); }
+    const native = await page.context().browser().newContext({viewport:{width:1200,height:800},serviceWorkers:"block"});
+    try {
+      page = await native.newPage();
+      await page.goto(options.baseURL + "/plugin/stash-tv/assets/index.html?autoplay=false&scene=" + ids[0] + "&seed=17");
+      await page.waitForFunction(() => document.getElementById("player").dataset.videoReady === "true");
+      await click("#layout-four");
+      await ready(4);
+      await click(".multiview-toggle");
+      await page.waitForFunction(() => [...document.querySelectorAll("#views video")].every(video => video.paused));
+      let failures = 0;
+      await page.route("**/scene/*/stream*", route => {
+        failures++;
+        return route.fulfill({ status: 503, body: "Temporary fixture stream failure" });
+      });
+      await page.locator("#views > .view").nth(1).locator("video").evaluate(video => video.load());
+      await page.waitForFunction(() => document.querySelectorAll("#views > .view")[1].dataset.tilePhase === "error");
+      check(failures > 0, "The stream fault did not reach the network");
+      await page.unroute("**/scene/*/stream*");
+      await page.locator("#views > .view").nth(1).locator(".tile-toggle").click();
+      await page.waitForFunction(() => {
+        const videos = [...document.querySelectorAll("#views video")];
+        return videos[1].readyState >= 2 && !videos[1].paused && !videos[1].seeking &&
+          videos.every((video, index) => index === 1 || video.paused);
+      });
+      results.push({ name: "a failed real native stream retries from its own playback button without resuming the other videos", passed: true });
+    } finally { page = desktop; await native.close(); }
     check(errors.length === 0, errors.join("; "));
     return { passed: true, browser: options.browser, results, errors };
   } catch (error) {
