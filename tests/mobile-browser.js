@@ -9,6 +9,8 @@ export default async function verifyMobile(page, options) {
   page.on('pageerror', error => errors.push(error.message));
   await page.addInitScript(() => {
     window.mobileEvents = [];
+    window.bufferEvents = [];
+    document.addEventListener('stash-tv-buffer', event => window.bufferEvents.push(event.detail), true);
     const record = (type, extra = {}) => {
       const video = document.querySelector('#video');
       window.mobileEvents.push({ type, wall:performance.now(), time:video?.currentTime,
@@ -42,7 +44,11 @@ export default async function verifyMobile(page, options) {
     check(response.ok() && !body.errors, JSON.stringify(body));
     return body.data;
   };
-    const ready = () => page.waitForFunction(() => ['ready', 'paused', 'playing'].includes(document.querySelector('#player').dataset.phase) && !document.querySelector('#video').seeking);
+    const ready = () => page.waitForFunction(() => {
+      const player = document.querySelector('#player');
+      return ['ready', 'paused', 'playing'].includes(player.dataset.phase) &&
+        player.dataset.buffering === 'false' && !document.querySelector('#video').seeking;
+    });
     const settled = () => page.waitForFunction(() => !document.querySelector('#player').dataset.swipePhase);
   try {
     const { findScenes } = await api('{findScenes{scenes{id files{path}}}}');
@@ -78,6 +84,7 @@ export default async function verifyMobile(page, options) {
       await ready();
     };
     const cdp = options.browser === 'chrome' ? await context.newCDPSession(page) : null;
+    if (cdp) await cdp.send('Network.setCacheDisabled', {cacheDisabled:true});
     if (!cdp) await page.evaluate(() => {
       // WebKit's automation interface exposes taps but no held touch sequence.
       window.originalCapture = Element.prototype.setPointerCapture;
@@ -289,6 +296,9 @@ export default async function verifyMobile(page, options) {
     await settled();
     after=await sample();
     check(!after.paused && after.rate === 1,'Swipe next failed to play');
+    await page.locator('#toggle').click();
+    await position(20);
+    await page.waitForFunction(()=>document.querySelector('#player').dataset.videoReady==='true');
     await touch('down',195,320); await touch('move',195,450); await touch('up',195,450);
     await page.waitForFunction(id=>new URL(location.href).searchParams.get('scene')===id,before.scene);
     await ready();
@@ -537,6 +547,12 @@ export default async function verifyMobile(page, options) {
   } catch(error) {
     await page.screenshot({ path:options.reportDir + '/' + options.browser + '-mobile-failure.png' });
     return { passed:false, browser:options.browser, error:error.message, results, errors,
-      events:await page.evaluate(()=>window.mobileEvents) };
+      events:await page.evaluate(()=>window.mobileEvents),
+      state:await page.evaluate(()=>({player:{...document.querySelector('#player').dataset},
+        video:{time:document.querySelector('#video').currentTime,paused:document.querySelector('#video').paused},
+        canvases:['swipe-incoming','swipe-outgoing'].map(id=>({id,width:document.getElementById(id).width,
+          hidden:document.getElementById(id).hidden,data:{...document.getElementById(id).dataset}})),
+        buffers:window.bufferEvents})),
+      requests:await (await page.request.get(options.baseURL+'/_test/requests')).json() };
   } finally { await context.close(); }
 }
