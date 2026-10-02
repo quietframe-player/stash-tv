@@ -26,7 +26,7 @@ export async function createBuffer(onPrepared, onStatus) {
   function request(message, transfer = []) {
     return new Promise((resolve, reject) => {
       const channel = new MessageChannel();
-      const timer = setTimeout(() => { channel.port1.close(); reject(new Error("Media cache unavailable")); }, 5000);
+      const timer = setTimeout(() => { channel.port1.close(); reject(new Error("Media cache unavailable")); }, 15000);
       channel.port1.onmessage = event => {
         clearTimeout(timer); channel.port1.close();
         if (event.data.error) reject(new Error(event.data.error)); else resolve(event.data.result);
@@ -64,9 +64,12 @@ export async function createBuffer(onPrepared, onStatus) {
           done.set(identity(current.item), Date.now());
           onPrepared({ ...current.item, bitmap, frameTime: prepared.frameTime });
           onStatus({ state: "prepared", id: current.item.id, bytes: prepared.bytes, seconds: current.item.seconds,
-            frameTime: prepared.frameTime, cacheBytes: stats.bytes, entries: stats.count });
+            frameTime: prepared.frameTime, cacheBytes: stats.bytes, cacheLimit: stats.limit, entries: stats.count });
         } else bitmap?.close();
-      } catch { bitmap?.close(); skipped.add(identity(current.item)); }
+      } catch {
+        bitmap?.close(); skipped.add(identity(current.item));
+        onStatus({ state: "skipped", id: current.item.id, reason: "cache storage" });
+      }
     } else message.prepared?.bitmap?.close();
     if (active === current) active = null;
     run();
