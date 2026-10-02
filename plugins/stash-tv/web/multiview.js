@@ -276,6 +276,7 @@ export function createMultiview(options) {
     slot.resume = stream.offset ? 0 : seconds;
     slot.url = options.sourceAt(stream, seconds);
     slot.phase = "loading";
+    slot.waitingAt = 0;
     slot.node.dataset.phase = "loading";
     slot.node.dataset.decoded = "false";
     slot.retry.hidden = true;
@@ -358,7 +359,7 @@ export function createMultiview(options) {
     options.root.appendChild(node);
     const slot = { node, video, cover, retry, id: "", scene: null, index: 0, generation: 0,
       wantsPlay: defaultPlaying, fill: mountFrameFill(node,video),
-      offset: 0, resume: 0, url: "", phase: "loading", counted: false, playedAt: 0, timer: 0, frame: 0 };
+      offset: 0, resume: 0, url: "", phase: "loading", waitingAt: 0, counted: false, playedAt: 0, timer: 0, frame: 0 };
     retry.onclick = () => groupPlaying(true);
     video.addEventListener("loadedmetadata", () => {
       if (slot.scene && video.currentSrc === slot.url && slot.resume) {
@@ -379,10 +380,11 @@ export function createMultiview(options) {
     for (const event of ["waiting", "seeking"]) video.addEventListener(event, () => {
       if (!slot.scene || video.currentSrc !== slot.url || slot.phase === "error") return;
       slot.phase = "loading";
+      slot.waitingAt = video.currentTime;
       slot.node.dataset.phase = "loading";
       options.changed();
     });
-    video.addEventListener("playing", () => {
+    function onPlaying() {
       if (!slot.scene || video.currentSrc !== slot.url) return;
       clearTimeout(slot.timer);
       slot.phase = "playing";
@@ -392,6 +394,12 @@ export function createMultiview(options) {
       if (!slot.counted) { slot.counted = true; options.played(slot.scene.id); }
       present(slot);
       options.changed();
+    }
+    video.addEventListener("playing", onPlaying);
+    video.addEventListener("timeupdate", () => {
+      if (slot.phase === "playing" || slot.phase === "error" || slot.resume || video.paused ||
+          video.ended || video.seeking || video.readyState < 2 || video.currentTime <= slot.waitingAt) return;
+      onPlaying();
     });
     video.addEventListener("pause", () => { save(slot); options.changed(); });
     function recover() {
