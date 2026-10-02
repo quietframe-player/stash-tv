@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { randomScenes, createGridQueue, advanceGrid, randomGrid } from "../plugins/stash-tv/web/multiview.js";
+import { randomScenes, createGridQueue, advanceGrid, randomGrid, singleSoundtrack } from "../plugins/stash-tv/web/multiview.js";
 import { frameInsets, frameScale } from "../plugins/stash-tv/web/frame-fill.js";
 
 test("multiview selects distinct random scenes without the primary or other active slots", () => {
@@ -58,4 +58,11 @@ test("grid navigation wraps at both ends and random retries have a distinct boun
   for(let i=0;i<200;i++) queue=advanceGrid(queue,1);
   expect(queue.history.length).toBe(100);
   expect(queue.cursor).toBe(99);
+});
+
+test("iPhone and iPad use one soundtrack without applying iOS restrictions to Android or desktop", () => {
+  expect(singleSoundtrack("Mozilla/5.0 (iPhone; CPU iPhone OS 26_0 like Mac OS X)", "iPhone", 5)).toBe(true);
+  expect(singleSoundtrack("Mozilla/5.0 (Macintosh; Intel Mac OS X)", "MacIntel", 5)).toBe(true);
+  expect(singleSoundtrack("Mozilla/5.0 (Macintosh; Intel Mac OS X)", "MacIntel", 0)).toBe(false);
+  expect(singleSoundtrack("Mozilla/5.0 (Linux; Android 16)", "Linux armv8l", 5)).toBe(false);
 });

@@ -132,7 +132,7 @@ export default async function verifyMultiview(page, options) {
     await click('#layout-two'); await ready(1);
     await page.goto('about:blank');
     for (const id of ids) await api('mutation($id:ID!){sceneSaveActivity(id:$id,resume_time:3,playDuration:0)}',{id});
-    mobile=await page.context().browser().newContext({viewport:{width:390,height:844},isMobile:true,hasTouch:true,serviceWorkers:'block'});
+    mobile=await page.context().browser().newContext({viewport:{width:390,height:844},isMobile:true,hasTouch:true,serviceWorkers:'block',userAgent:'Mozilla/5.0 (iPhone; CPU iPhone OS 26_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Mobile/15E148 Safari/604.1'});
     const desktop=page; page=await mobile.newPage(); observe();
     await page.goto(url); await ready(1); await page.locator('#toggle').tap(); await page.locator('#more').tap(); await page.locator('#layout-four').tap(); await playing(4);
     await filled(4);
@@ -142,8 +142,10 @@ export default async function verifyMultiview(page, options) {
     await page.waitForFunction(()=>[...document.querySelectorAll('#views video')].every(v=>v.muted));
     check(await page.locator('#volume-panel').isHidden()&&await page.locator('#mute').getAttribute('aria-label')==='Unmute','Mobile opened a desktop volume popup');
     await page.locator('#mute').tap();
-    await page.waitForFunction(()=>[...document.querySelectorAll('#views video')].every(v=>!v.muted));
+    await page.waitForFunction(()=>[...document.querySelectorAll('#views video')].every((v,i)=>v.muted===(i>0)));
     check(await page.locator('#volume-panel').isHidden(),'Mobile unmute opened a popup');
+    await playing(4);
+    pass('iPhone unmute keeps one soundtrack and all four videos playing');
     pass('portrait widths 320/390/430 keep four fixed-size controls and one shared mute button');
     await page.screenshot({path:options.reportDir+'/'+options.browser+'-multiview-mobile-controls.png'});
     await page.setViewportSize({width:844,height:390}); await layout(4); await page.locator('#mute').tap();

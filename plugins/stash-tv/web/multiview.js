@@ -37,12 +37,17 @@ export function randomGrid(queue, random = Math.random) {
   return appendGrid(queue, next);
 }
 
+export function singleSoundtrack(userAgent, platform, touchPoints) {
+  return /iPhone|iPad|iPod/.test(userAgent) || platform === "MacIntel" && touchPoints > 1;
+}
+
 export function createMultiview(options) {
   const slots = [];
   let defaultPlaying = false;
   let suspended = false;
   let primaryFill = null;
   let queue = null;
+  const oneSoundtrack = singleSoundtrack(navigator.userAgent, navigator.platform, navigator.maxTouchPoints);
   let audio = { volume: options.primaryController.video.volume, muted: options.primaryController.video.muted };
   let rate = options.primaryController.video.playbackRate;
 
@@ -217,7 +222,7 @@ export function createMultiview(options) {
     const video = document.createElement("video");
     video.playsInline = true;
     video.volume = audio.volume;
-    video.muted = video.defaultMuted = audio.muted;
+    video.muted = video.defaultMuted = audio.muted || oneSoundtrack;
     video.playbackRate = rate;
     video.preload = "metadata";
     video.crossOrigin = "anonymous";
@@ -333,7 +338,7 @@ export function createMultiview(options) {
     seekFraction(fraction) { slots.forEach(slot => seekSlot(slot, fraction * (Number(slot.scene?.files[0]?.duration) || 0))); },
     setAudio(volume, muted) {
       audio = {volume, muted};
-      slots.forEach(slot => { slot.video.volume = volume; slot.video.muted = muted; });
+      slots.forEach(slot => { slot.video.volume = volume; slot.video.muted = muted || oneSoundtrack; });
     },
     setRate(value) { rate = value; slots.forEach(slot => { slot.video.playbackRate = value; }); },
     loading: () => slots.some(slot => slot.phase === "loading"),

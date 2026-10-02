@@ -47,8 +47,9 @@ apply to every video. Relative seeking moves each video by the same number of se
 The grid seek bar uses percentages to seek each video's own duration.
 Previous, Random, Next, and the two/four-video layouts are inside More.
 Navigation keeps a history of complete grids, so Previous restores all feeds together.
-All soundtracks use the same mute and volume setting, and each video saves its playback
-position in Stash. Permanent deletion is available in single view.
+Desktop soundtracks share one mute and volume setting. On iPhone and iPad, only the first
+video supplies sound so the other videos can keep playing; the same button mutes it.
+Each video saves its playback position in Stash. Permanent deletion is available in single view.
 
 Extra streams load only while multiview is selected and unload when you return to single
 view. Neighbor preparation pauses during multiview to give the playing videos bandwidth.
