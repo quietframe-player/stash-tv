@@ -19,6 +19,10 @@ export async function createBuffer(onPrepared, onStatus) {
   const done = new Map();
   const skipped = new Set();
   const identity = item => item.url + "/" + item.signature + "/" + item.seconds;
+  function retained(stats) {
+    const kept = new Set(stats.retained.map(item => item.signature + "/" + item.seconds));
+    for (const item of plan) if (!kept.has(item.signature + "/" + item.seconds)) done.delete(identity(item));
+  }
   function request(message, transfer = []) {
     return new Promise((resolve, reject) => {
       const channel = new MessageChannel();
@@ -51,8 +55,12 @@ export async function createBuffer(onPrepared, onStatus) {
       const bitmap = prepared.bitmap;
       delete prepared.bitmap;
       try {
-        const stats = await request({ type: "store", prepared }, prepared.ranges.map(range => range.data));
-        if (plan.some(item => identity(item) === identity(current.item)) && !disposed) {
+        const stats = await request({ type: "store", prepared, urls: plan.map(item => item.url) }, prepared.ranges.map(range => range.data));
+        retained(stats);
+        if (!stats.stored) {
+          bitmap?.close(); skipped.add(identity(current.item));
+          onStatus({ state: "skipped", id: current.item.id, reason: "cache budget" });
+        } else if (plan.some(item => identity(item) === identity(current.item)) && !disposed) {
           done.set(identity(current.item), Date.now());
           onPrepared({ ...current.item, bitmap, frameTime: prepared.frameTime });
           onStatus({ state: "prepared", id: current.item.id, bytes: prepared.bytes, seconds: current.item.seconds,
@@ -66,12 +74,15 @@ export async function createBuffer(onPrepared, onStatus) {
   worker.onerror = () => { active = null; paused = true; onStatus({ state: "unavailable" }); };
   return {
     update(items) {
+      if (plan.map(identity).join("\n") !== items.map(identity).join("\n")) skipped.clear();
       plan = items;
       const wanted = new Set(items.map(identity));
       for (const key of done.keys()) if (!wanted.has(key)) done.delete(key);
       for (const key of skipped) if (!wanted.has(key)) skipped.delete(key);
       if (active && !wanted.has(identity(active.item))) worker.postMessage({ type: "cancel" });
-      request({ type: "retain", urls: items.map(item => item.url) }).catch(() => {});
+      request({ type: "retain", urls: items.map(item => item.url) }).then(stats => {
+        retained(stats); run();
+      }).catch(() => {});
       run();
     },
     pause(value) {

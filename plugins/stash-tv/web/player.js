@@ -240,6 +240,7 @@ async function boot() {
   const positions = new Map();
   let buffer = null;
   let bufferSetup = null;
+  let bufferPlan = 0;
   let readyFrame = 0;
   let multiview = null;
   let multiviewSetup = null;
@@ -372,7 +373,7 @@ async function boot() {
     const busy = value || state.layout > 1 && multiview?.loading();
     player.dataset.buffering = String(!!busy);
     byId("toggle").setAttribute("aria-busy", String(!!busy));
-    buffer?.pause(state.layout > 1 || document.hidden || value || !["ready", "playing", "paused"].includes(state.phase));
+    buffer?.pause(document.hidden || busy || !["ready", "playing", "paused"].includes(state.phase));
     showControls();
   }
 
@@ -380,7 +381,7 @@ async function boot() {
     player.classList.remove("idle");
     clearTimeout(state.hideTimer);
     scheduleTimeline();
-    if (state.phase === "playing" && player.dataset.buffering === "false" && !scrub.dragging && scrub.time === null && byId("volume-panel").hidden && byId("more-panel").hidden)
+    if (state.phase === "playing" && player.dataset.buffering === "false" && !scrub.dragging && scrub.time === null && byId("volume-panel").hidden && byId("more-panel").hidden && byId("grid-seek-panel").hidden)
       state.hideTimer = setTimeout(function () {
         player.classList.add("idle");
         byId("surface").focus();
@@ -725,7 +726,7 @@ async function boot() {
         throw error;
       });
     cache.set(id, promise);
-    while (cache.size > 4) cache.delete(cache.keys().next().value);
+    while (cache.size > 4 * state.layout) cache.delete(cache.keys().next().value);
     return promise;
   }
 
@@ -789,7 +790,7 @@ async function boot() {
 
   function storeStill(id, seconds, promise) {
     stills.set(id, { seconds, promise });
-    while (stills.size > 4) stills.delete(stills.keys().next().value);
+    while (stills.size > 4 * state.layout) stills.delete(stills.keys().next().value);
     return promise;
   }
 
@@ -824,26 +825,28 @@ async function boot() {
   }
 
   async function warmNeighbours() {
-    if (state.layout > 1) return;
+    const plan = ++bufferPlan;
     const generation = state.generation;
     const queue = state.queue;
     if (!queue) return;
-    const items = (await Promise.all([1, 2, -1, 0].map(async direction => {
+    const neighbours = state.layout > 1 ? multiview?.neighbours() || [] : [1, 2, -1, 0].flatMap(direction => {
       const index = queue.index + direction;
-      if (index < 0 || index >= queue.ids.length) return null;
+      return index < 0 || index >= queue.ids.length ? [] : [{ id: queue.ids[index], current: direction === 0 }];
+    });
+    const items = (await Promise.all(neighbours.map(async neighbour => {
       try {
-        const scene = await getScene(queue.ids[index]);
+        const scene = await getScene(neighbour.id);
         const file = scene.files[0];
         const source = scene.sources[0];
         if (!file || file.format !== "mp4" || !source || source.offset) return null;
         return { id: scene.id, url: source.url, size: Number(file.size), seconds: checkpoint(scene),
-          signature: [file.id, file.size, file.mod_time].join(":"), current: direction === 0 };
+          signature: [file.id, file.size, file.mod_time].join(":"), current: neighbour.current };
       } catch { return null; }
     }))).filter(Boolean);
-    if (generation !== state.generation || state.layout > 1) return;
+    if (generation !== state.generation || plan !== bufferPlan) return;
     const service = buffer || (items.some(item => !item.current) ? await ensureBuffer() : null);
-    if (!service || generation !== state.generation || state.layout > 1) return;
-    service.pause(document.hidden || state.buffering || !["ready", "playing", "paused"].includes(state.phase));
+    if (!service || generation !== state.generation || plan !== bufferPlan) return;
+    service.pause(document.hidden || state.buffering || multiview?.loading() || !["ready", "playing", "paused"].includes(state.phase));
     service.update(items);
   }
 
@@ -897,6 +900,10 @@ async function boot() {
   async function loadScene(transition) {
     cancelTouch();
     if (!transition) resetSwipe();
+    if (state.layout > 1 && video.readyState >= 2 && video.videoWidth && !video.seeking) {
+      drawStill(byId("grid-cover"), video);
+      byId("grid-cover").hidden = false;
+    }
     saveProgress();
     if (state.scene && !state.fromBeginning && !video.seeking && !video.ended &&
         player.dataset.videoReady === "true" && video.readyState >= 2 && video.videoWidth) {
@@ -929,6 +936,12 @@ async function boot() {
     showControls();
     const queue = state.queue;
     const id = queue.ids[queue.index];
+    if (state.layout > 1) getStill(id).then(frame => {
+      if (frame && generation === state.generation && player.dataset.videoReady !== "true") {
+        drawStill(byId("grid-cover"), frame);
+        byId("grid-cover").hidden = false;
+      }
+    });
     const available = new Set(queue.ids).size;
     if (state.layout > available) setLayout(available >= 2 ? 2 : 1);
     multiview?.primaryChanged(id);
@@ -1050,7 +1063,11 @@ async function boot() {
     resetSwipe();
     closeMore();
     closeVolume();
+    closeGridSeek();
     state.layout = count;
+    for (const store of [cache, stills]) while (store.size > 4 * count) store.delete(store.keys().next().value);
+    if (count === 1) byId("grid-cover").hidden = true;
+    byId("seek-videos").hidden = count === 1;
     byId("seek").setAttribute("aria-label", count > 1 ? "Seek all videos" : "Seek");
     byId("duration").textContent = count > 1 ? "100%" : timeLabel(Number(state.scene?.files[0]?.duration) || 0);
     byId("delete").hidden = count > 1 || !state.enableDelete;
@@ -1067,7 +1084,7 @@ async function boot() {
     if (count === 1) params.delete("layout");
     else params.set("layout", String(count));
     history.replaceState(null, "", location.pathname + "?" + params.toString());
-    buffer?.pause(count > 1 || document.hidden || state.buffering);
+    buffer?.pause(true);
     showControls();
     if (count > 1 && !multiviewSetup) {
       const url = new URL("./multiview.js", import.meta.url);
@@ -1077,6 +1094,9 @@ async function boot() {
           root: byId("views"),
           primaryController: {
             node: byId("primary-view"), video,
+            position: currentTime,
+            duration: () => Number(state.scene?.files[0]?.duration) || 0,
+            seek: seconds => seek(seconds, false, false),
             setPlaying(value) {
               state.wantsPlay = value;
               if (value && state.phase === "error") loadScene();
@@ -1090,9 +1110,15 @@ async function boot() {
             loadScene();
           },
           changed: () => setBuffering(state.buffering),
+          neighboursChanged: warmNeighbours,
           ids: () => state.queue.ids,
           primary: () => state.queue.ids[state.queue.index],
           getScene, checkpoint, sourceAt, truncatedWebmFallback,
+          getStill, drawStill,
+          seekRows: byId("grid-seek-rows"),
+          seekPanel: byId("grid-seek-panel"),
+          closeSeekPanel: closeGridSeek,
+          timeLabel, showControls,
           retryIcon: byId("toggle").querySelector(".icon-rotate-ccw"),
           loadingIcon: byId("toggle").querySelector(".icon-loader-circle"),
           played: id => api("mutation TVPlayed($id:ID!){sceneIncrementPlayCount(id:$id)}", { id }).catch(() => {}),
@@ -1121,7 +1147,7 @@ async function boot() {
     byId("surface").focus();
     byId("previous").disabled = state.layout === 1 && state.queue.index === 0;
     byId("next").disabled = state.layout === 1 && state.queue.index === state.queue.ids.length - 1;
-    if (state.layout === 1) warmNeighbours();
+    warmNeighbours();
   }
 
   function seek(seconds, preview, broadcast = true) {
@@ -1443,6 +1469,7 @@ async function boot() {
       if (readyFrame) video.cancelVideoFrameCallback(readyFrame);
       readyFrame = 0;
       player.dataset.videoReady = "true";
+      byId("grid-cover").hidden = true;
       settleSwipe();
       return;
     }
@@ -1459,6 +1486,7 @@ async function boot() {
       if (state.resume || Math.abs(metadata.mediaTime - video.currentTime) > 0.15) { watchFrame(); return; }
       player.dataset.frameDecoded = "true";
       player.dataset.videoReady = "true";
+      byId("grid-cover").hidden = true;
       settleSwipe();
     });
   }
@@ -1637,12 +1665,12 @@ async function boot() {
   surface.addEventListener("contextmenu", function (event) {
     if (touch || performance.now() < touchClickUntil) event.preventDefault();
   });
-  window.addEventListener("blur", cancelTouch);
+  window.addEventListener("blur", function () { cancelTouch(); closeGridSeek(); });
   window.addEventListener("pagehide", cancelTouch);
   document.addEventListener("visibilitychange", function () {
-    if (document.hidden) { cancelTouch(); endWheel(); }
+    if (document.hidden) { cancelTouch(); endWheel(); closeGridSeek(); }
     multiview?.suspend(document.hidden);
-    buffer?.pause(state.layout > 1 || document.hidden || state.buffering || !["ready", "playing", "paused"].includes(state.phase));
+    buffer?.pause(document.hidden || state.buffering || multiview?.loading() || !["ready", "playing", "paused"].includes(state.phase));
     if (!document.hidden) warmNeighbours();
   });
   window.addEventListener("pagehide", function (event) {
@@ -1659,11 +1687,13 @@ async function boot() {
   // Handle touch controls directly; a preceding drag can suppress compatibility clicks.
   let controlTouch = null;
   let controlClickUntil = 0;
-  const controls = player.querySelector("nav");
+  const controls = player.querySelector("footer.chrome");
   controls.addEventListener("pointerdown", function (event) {
     const button = event.target.closest("button");
-    if (event.pointerType === "touch" && event.isPrimary && button && !button.disabled)
+    if (event.pointerType === "touch" && event.isPrimary && button && !button.disabled) {
+      event.preventDefault();
       controlTouch = { button: button, id: event.pointerId, x: event.clientX, y: event.clientY };
+    }
   });
   controls.addEventListener("pointerup", function (event) {
     const contact = controlTouch;
@@ -1676,7 +1706,7 @@ async function boot() {
     contact.button.click();
   });
   controls.addEventListener("pointercancel", function () { controlTouch = null; });
-  controls.addEventListener("click", function (event) {
+  player.addEventListener("click", function (event) {
     if (event.detail !== 0 && performance.now() < controlClickUntil) {
       event.preventDefault();
       event.stopImmediatePropagation();
@@ -1779,6 +1809,7 @@ async function boot() {
   byId("more").onclick = function () {
     const open = byId("more-panel").hidden;
     closeVolume();
+    closeGridSeek();
     byId("more-panel").hidden = !open;
     byId("more").setAttribute("aria-expanded", String(open));
     showControls();
@@ -1794,6 +1825,35 @@ async function boot() {
       event.stopImmediatePropagation(); closeMore(); byId("more").focus(); showControls();
     }
   });
+  function closeGridSeek() {
+    byId("grid-seek-panel").hidden = true;
+    byId("seek-videos").setAttribute("aria-expanded", "false");
+    multiview?.closeSeek();
+  }
+  byId("seek-videos").onclick = function () {
+    closeMore(); closeVolume();
+    byId("grid-seek-panel").hidden = false;
+    byId("seek-videos").setAttribute("aria-expanded", "true");
+    multiview?.openSeek();
+    showControls();
+  };
+  byId("grid-seek-close").onclick = function () {
+    closeGridSeek(); byId("more").focus(); showControls();
+  };
+  for (const id of ["seek-videos", "grid-seek-close"]) byId(id).addEventListener("keydown", function (event) {
+    if (event.key === " " || event.key === "Enter") {
+      event.preventDefault(); event.stopPropagation();
+      if (!event.repeat) this.click();
+    }
+  });
+  document.addEventListener("pointerdown", function (event) {
+    if (!event.target.closest("#grid-seek-panel, #seek-videos")) closeGridSeek();
+  });
+  document.addEventListener("keydown", function (event) {
+    if (event.key === "Escape" && !byId("grid-seek-panel").hidden) {
+      event.stopImmediatePropagation(); closeGridSeek(); byId("more").focus(); showControls();
+    }
+  });
   function closeVolume() {
     const open = !byId("volume-panel").hidden;
     byId("volume-panel").hidden = true;
@@ -1803,6 +1863,7 @@ async function boot() {
   byId("mute").onclick = function () {
     if (matchMedia("(pointer: coarse)").matches) { toggleMute(); return; }
     closeMore();
+    closeGridSeek();
     const open = byId("volume-panel").hidden;
     byId("volume-panel").hidden = !open;
     byId("mute").setAttribute("aria-expanded", String(open));
