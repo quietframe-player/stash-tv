@@ -126,6 +126,34 @@ export default async function verifyGridBuffering(page, options) {
     check(budget.every(value => value.bytes <= 64 * 1024 * 1024) && budget[5].bytes === 64 * 1024 * 1024 &&
       budget[5].retained.map(item => item.signature).sort().join() === "0,1,2,3", "Cache evicted nearer videos instead of preserving priority: " + JSON.stringify(budget));
     results.push({name: "full 64 MiB cache evicts farther videos and rejects lower-priority work", passed: true});
+    const replacement = await page.evaluate(async () => {
+      const url = location.origin + "/scene/1/stream?cache_replacement=1";
+      const request = prepared => new Promise((resolve, reject) => {
+        const channel = new MessageChannel();
+        channel.port1.onmessage = event => {
+          channel.port1.close();
+          if (event.data.error) reject(new Error(event.data.error)); else resolve(event.data.result);
+        };
+        navigator.serviceWorker.controller.postMessage({type: "store", urls: [url], prepared},
+          [channel.port2, ...prepared.ranges.map(range => range.data)]);
+      });
+      const prepared = length => ({url, bytes: length, total: 32, mime: "video/mp4", modified: "",
+        signature: "replacement", seconds: length,
+        ranges: [{start: 0, end: length - 1, data: Uint8Array.from({length}, (_, i) => i).buffer}]});
+      const cache = await caches.open("stash-tv-media-v1");
+      await request(prepared(16));
+      const index = (await cache.keys()).find(key => key.url.endsWith("/index"));
+      const old = await (await cache.match(index)).json();
+      await request(prepared(8));
+      const part = old.revision ? old.revision + "/0" : "0";
+      const response = await cache.match(new URL(part, new URL("./_media/" + old.id + "/", navigator.serviceWorker.controller.scriptURL)));
+      const latest = await (await cache.match(index)).json();
+      return {oldBytes: response ? (await response.arrayBuffer()).byteLength : null, latestBytes: latest.bytes};
+    });
+    check(replacement.oldBytes === null || replacement.oldBytes === 16,
+      "A reader holding the old index received shorter replacement bytes: " + JSON.stringify(replacement));
+    check(replacement.latestBytes === 8, "Replacement was not stored");
+    results.push({name: "replacing a checkpoint cannot mix new range bytes with an in-flight old index", passed: true});
     check(errors.length === 0, "Page errors: " + errors.join("; "));
     return { passed: true, browser: options.browser, results, errors };
   } catch (error) {
