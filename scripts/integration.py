@@ -175,9 +175,10 @@ plugins_path: /config/plugins
                     unique.replace(path)
             pad_mp4(media / "sintel-40.mp4", 2 * 1024 * 1024, inside_moov=True)
             pad_mp4(media / "sintel-46.mp4", 2 * 1024 * 1024, inside_moov=False)
+        scan_images = args.suite != "grid-buffering"
         api("mutation($input:ScanMetadataInput!){metadataScan(input:$input)}", {
-            "input": {"paths": ["/media"], "scanGenerateSprites": True,
-                      "scanGenerateCovers": True, "scanGeneratePreviews": False,
+            "input": {"paths": ["/media"], "scanGenerateSprites": scan_images,
+                      "scanGenerateCovers": scan_images, "scanGeneratePreviews": False,
                       "scanGeneratePhashes": False},
         })
         for _ in range(90):
@@ -187,7 +188,7 @@ plugins_path: /config/plugins
                 break
             time.sleep(1)
         else:
-            raise RuntimeError("Sintel scan and preview generation did not finish")
+            raise RuntimeError(f"Sintel scan and preview generation did not finish: expected {expected} scenes, got {scanned}")
         if args.suite in ["buffering", "mobile", "latency", "handoff", "multiview", "grid-buffering"]:
             proxy = MediaProxy(port)
             base_url = proxy.url
