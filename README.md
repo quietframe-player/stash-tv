@@ -29,7 +29,8 @@ To uninstall, remove **Stash TV** from that page. This removes the plugin, not y
 ## Playback
 
 Click the video to pause or play. Double-click it to enter fullscreen.
-Click the speaker button to open volume adjustment and mute controls.
+On desktop, the speaker button opens a shared volume slider and mute control.
+On touch devices, it toggles mute; use the device volume buttons for the level.
 Controls hide during playback. Move the pointer or tap the video to show them.
 Autoplay and fullscreen still follow your browser's user-gesture rules.
 
@@ -40,19 +41,23 @@ no gaps or borders and crop their edges to fill the available space.
 Encoded black padding is detected from a few small frame samples and cropped in the grid,
 so letterboxed source videos also meet at the tile edges without stretching the picture.
 
-Hover, tap, or focus a video to reveal its controls; the other videos stay clear.
-The selected tile has a seek bar and four icons: play/pause, volume, fullscreen, and More.
-Previous, Random, and Next are inside More, and each feed keeps its own navigation history.
-Tap a video to pause only that tile. Choose its volume button to hear its audio; the other tiles mute.
-One grid menu pauses or resumes all videos and changes the layout. Controls fade away during playback. When an extra
-video ends, its tile picks another random scene. All tiles save their playback positions in Stash.
-Keyboard shortcuts apply to the focused tile. Permanent deletion is available in single view.
+One shared control bar handles the whole player; no video needs to be selected or focused.
+Play/pause, volume, keyboard shortcuts, double-tap seeking, swipes, and trackpad scrolling
+apply to every video. Relative seeking moves each video by the same number of seconds.
+The grid seek bar uses percentages to seek each video's own duration.
+Previous, Random, Next, and the two/four-video layouts are inside More.
+Navigation keeps a history of complete grids, so Previous restores all feeds together.
+Desktop soundtracks share one mute and volume setting. On iPhone and iPad, only the first
+video supplies sound so the other videos can keep playing; the same button mutes it.
+Each video saves its playback position in Stash. Permanent deletion is available in single view.
 
 Extra streams load only while multiview is selected and unload when you return to single
 view. Neighbor preparation pauses during multiview to give the playing videos bandwidth.
 Simultaneous playback depends on your device's video decoders and the available network
 and Stash streaming capacity.
-Use a tile's fullscreen button to expand that video and return to the grid when you exit. On iPhone, the tile uses native video fullscreen when page fullscreen is unavailable. The grid menu's fullscreen button expands the whole grid on supported browsers.
+The fullscreen button expands the whole player on supported browsers. iPhone uses native
+video fullscreen in single view; whole-grid fullscreen is unavailable where the browser
+only supports native fullscreen for one video.
 
 | Key | Action |
 | --- | --- |

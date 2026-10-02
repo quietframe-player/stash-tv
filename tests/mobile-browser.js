@@ -495,20 +495,13 @@ export default async function verifyMobile(page, options) {
     check((await sample()).paused, 'Control tap did not pause: '+JSON.stringify({sample:await sample(),events:await page.evaluate(()=>window.controlEvents)}));
     results.push({name:'horizontal drag and playback controls do not navigate',passed:true});
     check(await page.locator('#volume-panel').isHidden(), 'Volume panel is not collapsed');
+    const muted = await page.evaluate(()=>document.querySelector('#video').muted);
     await page.locator('#mute').tap();
-    check(await page.locator('#volume-panel').isVisible(), 'Volume button did not open panel');
-    await page.locator('#volume').evaluate(el=>{el.value='35';el.dispatchEvent(new Event('input',{bubbles:true}));});
-    check(await page.evaluate(()=>Math.abs(document.querySelector('#video').volume-0.35)<0.01),'Volume slider failed');
-    before=await sample();
-    await page.locator('#volume').focus();
-    await page.keyboard.press('ArrowUp');
-    check((await sample()).scene===before.scene && await page.evaluate(()=>document.querySelector('#video').volume>0.35),
-      'Focused volume slider navigated instead of changing volume');
-    await page.locator('#volume-mute').tap();
-    check(await page.evaluate(()=>document.querySelector('#video').muted),'Mute action failed');
+    check(await page.evaluate(()=>document.querySelector('#video').muted)!==muted,'Mobile speaker did not toggle mute');
+    check(await page.locator('#volume-panel').isHidden(),'Mobile speaker opened a desktop slider');
     await page.locator('#mute').tap();
-    check(await page.locator('#volume-panel').isHidden(),'Volume button did not close panel');
-    results.push({name:'volume button opens adjustment and mute controls',passed:true});
+    check(await page.evaluate(()=>document.querySelector('#video').muted)===muted,'Mobile unmute did not restore sound');
+    results.push({name:'mobile speaker toggles mute without an adjustment popup',passed:true});
     await page.locator('#fullscreen').tap();
     await page.waitForTimeout(500);
     const full = await page.evaluate(()=>!!(document.fullscreenElement||document.webkitFullscreenElement||document.querySelector('#video').webkitDisplayingFullscreen));

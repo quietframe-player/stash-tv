@@ -1,4 +1,3 @@
-import { mountTileControls } from "./tile-controls.js";
 import { mountFrameFill } from "./frame-fill.js";
 
 export function randomScenes(ids, count, excluded, random = Math.random) {
@@ -10,39 +9,47 @@ export function randomScenes(ids, count, excluded, random = Math.random) {
   return selected;
 }
 
+export function createGridQueue(ids, current) {
+  return { pool: [...new Set(ids)], history: [current.slice()], cursor: 0 };
+}
+
+function appendGrid(queue, snapshot) {
+  const history = [...queue.history.slice(0, queue.cursor + 1), snapshot].slice(-100);
+  return { ...queue, history, cursor: history.length - 1 };
+}
+
+export function advanceGrid(queue, direction) {
+  const cursor = queue.cursor + direction;
+  if (cursor >= 0 && cursor < queue.history.length) return { ...queue, cursor };
+  const current = queue.history[queue.cursor];
+  const next = current.map(id => queue.pool[(queue.pool.indexOf(id) + direction + queue.pool.length) % queue.pool.length]);
+  if (direction > 0) return appendGrid(queue, next);
+  return { ...queue, history: [next, ...queue.history].slice(0, 100), cursor: 0 };
+}
+
+export function randomGrid(queue, random = Math.random) {
+  const current = queue.history[queue.cursor];
+  for (let attempt = 0; attempt < 64; attempt++) {
+    const next = randomScenes(queue.pool, current.length, [], random);
+    if (next.every((id, index) => id !== current[index])) return appendGrid(queue, next);
+  }
+  const next = current.map(id => queue.pool[(queue.pool.indexOf(id) + 1) % queue.pool.length]);
+  return appendGrid(queue, next);
+}
+
+export function singleSoundtrack(userAgent, platform, touchPoints) {
+  return /iPhone|iPad|iPod/.test(userAgent) || platform === "MacIntel" && touchPoints > 1;
+}
+
 export function createMultiview(options) {
   const slots = [];
   let defaultPlaying = false;
   let suspended = false;
-  let primaryControls = null, primaryFill = null, toolbar = null, closeGridMenu = null;
-  let selected = null;
-  const layoutHomes = options.layoutButtons.map(button => ({ button, parent: button.parentNode, next: button.nextSibling }));
-  const controlOptions = {
-    ...options.controls,
-    activate: select,
-    visibility(node, visible) {
-      if (node === selected) options.root.parentNode.dataset.gridControls = String(visible);
-    },
-    selectAudio(video) {
-      for (const other of [options.primaryController.video, ...slots.map(slot => slot.video)]) other.muted = other !== video;
-      if (video.volume === 0) video.volume = 1;
-    },
-  };
-
-  function controls() {
-    return [{node:options.primaryController.node,ui:primaryControls}, ...slots.map(slot => ({node:slot.node,ui:slot.controls}))];
-  }
-  function selectedControls() { return controls().find(entry => entry.node === selected)?.ui; }
-  function select(node) {
-    if (selected === node) return;
-    closeGridMenu?.();
-    selected = node;
-    for (const entry of controls()) {
-      entry.node.dataset.selected = String(entry.node === node);
-      if (entry.node !== node) entry.ui?.dismiss();
-    }
-    selectedControls()?.show();
-  }
+  let primaryFill = null;
+  let queue = null;
+  const oneSoundtrack = singleSoundtrack(navigator.userAgent, navigator.platform, navigator.maxTouchPoints);
+  let audio = { volume: options.primaryController.video.volume, muted: options.primaryController.video.muted };
+  let rate = options.primaryController.video.playbackRate;
 
   function groupPlaying(value) {
     options.primaryController.setPlaying(value);
@@ -51,86 +58,35 @@ export function createMultiview(options) {
   function toggleAll() {
     groupPlaying([options.primaryController.video, ...slots.map(slot => slot.video)].every(video => video.paused));
   }
-  function renderGroup() {
-    if (!toolbar) return;
-    const paused = [options.primaryController.video, ...slots.map(slot => slot.video)].every(video => video.paused);
-    toolbar.dataset.paused = String(paused);
-    const button = toolbar.querySelector(".multiview-toggle");
-    button.setAttribute("aria-label", paused ? "Play all videos" : "Pause all videos");
-    button.title = button.getAttribute("aria-label");
+  function open(snapshot) {
+    defaultPlaying = true;
+    slots.forEach((slot, index) => { slot.wantsPlay = true; load(slot, snapshot[index + 1]); });
+    options.openPrimary(snapshot[0]);
   }
-  function mountPrimary() {
-    if (primaryControls) return;
-    selected = options.primaryController.node;
-    selected.dataset.selected = "true";
-    primaryControls = mountTileControls(options.primaryController, controlOptions);
-    primaryFill = mountFrameFill(selected, options.primaryController.video);
-    toolbar = document.createElement("div");
-    toolbar.className = "multiview-toolbar";
-    toolbar.setAttribute("role", "group");
-    toolbar.setAttribute("aria-label", "Multiview layout and group playback");
-    const menu = document.createElement("button");
-    menu.type = "button";
-    menu.className = "multiview-menu-toggle";
-    menu.setAttribute("aria-label", "Multiview options");
-    menu.setAttribute("aria-expanded", "false");
-    menu.appendChild(options.layoutButtons[1].querySelector("svg").cloneNode(true));
-    const panel = document.createElement("div");
-    panel.className = "multiview-menu";
-    panel.hidden = true;
-    closeGridMenu = () => {
-      panel.hidden = true;
-      menu.setAttribute("aria-expanded", "false");
-      options.root.parentNode.dataset.gridMenu = "false";
-    };
-    menu.onclick = () => {
-      panel.hidden = !panel.hidden;
-      menu.setAttribute("aria-expanded", String(!panel.hidden));
-      options.root.parentNode.dataset.gridMenu = String(!panel.hidden);
-      if (!panel.hidden) menu.focus({preventScroll:true});
-      selectedControls()?.show();
-    };
-    const toggle = document.createElement("button");
-    toggle.type = "button";
-    toggle.className = "multiview-toggle";
-    toggle.append(options.controls.icon("play"), options.controls.icon("pause"));
-    toggle.onclick = toggleAll;
-    panel.append(toggle, ...options.layoutButtons);
-    panel.onclick = event => {
-      if (!event.target.closest("button")) return;
-      closeGridMenu?.(); selectedControls()?.focus();
-    };
-    toolbar.append(menu, panel);
-    toolbar.addEventListener("focusin", () => selectedControls()?.show());
-    toolbar.addEventListener("pointermove", () => selectedControls()?.show());
-    toolbar.addEventListener("keydown", event => {
-      if (event.key === "Escape" && !panel.hidden) {
-        event.preventDefault(); event.stopPropagation(); closeGridMenu?.(); menu.focus();
-      }
+  function navigate(direction) {
+    queue = advanceGrid(queue, direction);
+    open(queue.history[queue.cursor]);
+  }
+  function random() {
+    queue = randomGrid(queue);
+    open(queue.history[queue.cursor]);
+  }
+  function position(slot) {
+    return slot.resume || slot.video.currentTime + slot.offset;
+  }
+  function seekSlot(slot, seconds) {
+    if (!slot.scene) return;
+    const duration = Number(slot.scene.files[0]?.duration) || 0;
+    const target = Math.max(0, Math.min(seconds, Math.max(0, duration - 0.1)));
+    const relative = target - slot.offset;
+    const stream = slot.scene.sources[slot.index];
+    const buffered = [slot.video.buffered, slot.video.seekable].every(ranges => {
+      for (let i = 0; i < ranges.length; i++) if (relative >= ranges.start(i) && relative < ranges.end(i)) return true;
+      return false;
     });
-    options.root.parentNode.appendChild(toolbar);
-    document.addEventListener("pointerdown", dismissGridMenu);
-    options.primaryController.video.addEventListener("playing", renderGroup);
-    options.primaryController.video.addEventListener("pause", renderGroup);
-    renderGroup();
-  }
-  function dismissGridMenu(event) {
-    if (!toolbar?.contains(event.target)) closeGridMenu?.();
-  }
-  function unmountPrimary() {
-    if (!primaryControls) return;
-    primaryControls.dispose(); primaryControls = null;
-    primaryFill.dispose(); primaryFill = null;
-    selected = null;
-    delete options.primaryController.node.dataset.selected;
-    delete options.root.parentNode.dataset.gridControls;
-    delete options.root.parentNode.dataset.gridMenu;
-    document.removeEventListener("pointerdown", dismissGridMenu);
-    closeGridMenu = null;
-    options.primaryController.video.removeEventListener("playing", renderGroup);
-    options.primaryController.video.removeEventListener("pause", renderGroup);
-    for (const { button, parent, next } of [...layoutHomes].reverse()) parent.insertBefore(button, next?.parentNode === parent ? next : null);
-    toolbar.remove(); toolbar = null;
+    if (stream.offset && !buffered) { save(slot); source(slot, slot.index, target); }
+    else if (slot.video.readyState < 1) slot.resume = target;
+    else slot.video.currentTime = relative;
   }
 
   function save(slot, keepalive) {
@@ -160,7 +116,7 @@ export function createMultiview(options) {
     slot.retry.title = label;
     slot.retry.dataset.action = playOnly ? "play" : "reload";
     slot.retry.hidden = false;
-    slot.controls?.render();
+    options.changed();
   }
 
   function retrySlot(slot) {
@@ -211,6 +167,7 @@ export function createMultiview(options) {
     slot.video.pause();
     slot.video.src = slot.url;
     slot.video.load();
+    options.changed();
     const generation = slot.generation;
     slot.timer = setTimeout(() => {
       if (generation === slot.generation && slot.phase === "loading") fail(slot, "Retry video");
@@ -228,12 +185,6 @@ export function createMultiview(options) {
     const generation = ++slot.generation;
     cancelFrame(slot);
     clearTimeout(slot.timer);
-    if (slot.history[slot.cursor] !== id) {
-      slot.history.splice(slot.cursor + 1);
-      slot.history.push(id);
-      if (slot.history.length > 100) slot.history.shift();
-      slot.cursor = slot.history.length - 1;
-    }
     slot.id = id;
     slot.scene = null;
     slot.counted = false;
@@ -268,10 +219,11 @@ export function createMultiview(options) {
   function mount() {
     const node = document.createElement("div");
     node.className = "view extra-view";
-    node.dataset.selected = "false";
     const video = document.createElement("video");
     video.playsInline = true;
-    video.muted = video.defaultMuted = true;
+    video.volume = audio.volume;
+    video.muted = video.defaultMuted = audio.muted || oneSoundtrack;
+    video.playbackRate = rate;
     video.preload = "metadata";
     video.crossOrigin = "anonymous";
     const cover = document.createElement("canvas");
@@ -287,9 +239,9 @@ export function createMultiview(options) {
     node.append(video, cover, loader, retry);
     options.root.appendChild(node);
     const slot = { node, video, cover, retry, id: "", scene: null, index: 0, generation: 0,
-      wantsPlay: defaultPlaying, history: [], cursor: -1, controls: null, fill: mountFrameFill(node,video),
+      wantsPlay: defaultPlaying, fill: mountFrameFill(node,video),
       offset: 0, resume: 0, url: "", phase: "loading", counted: false, playedAt: 0, timer: 0, frame: 0 };
-    retry.onclick = () => retrySlot(slot);
+    retry.onclick = () => groupPlaying(true);
     video.addEventListener("loadedmetadata", () => {
       if (slot.scene && video.currentSrc === slot.url && slot.resume) {
         video.currentTime = slot.resume;
@@ -304,11 +256,13 @@ export function createMultiview(options) {
       slot.retry.hidden = true;
       present(slot);
       play(slot);
+      options.changed();
     });
     for (const event of ["waiting", "seeking"]) video.addEventListener(event, () => {
       if (!slot.scene || video.currentSrc !== slot.url || slot.phase === "error") return;
       slot.phase = "loading";
       slot.node.dataset.phase = "loading";
+      options.changed();
     });
     video.addEventListener("playing", () => {
       if (!slot.scene || video.currentSrc !== slot.url) return;
@@ -319,9 +273,9 @@ export function createMultiview(options) {
       if (!slot.playedAt) slot.playedAt = performance.now();
       if (!slot.counted) { slot.counted = true; options.played(slot.scene.id); }
       present(slot);
+      options.changed();
     });
-    video.addEventListener("pause", () => { save(slot); renderGroup(); });
-    video.addEventListener("playing", renderGroup);
+    video.addEventListener("pause", () => { save(slot); options.changed(); });
     function recover() {
       if (!slot.scene || video.currentSrc !== slot.url || slot.phase === "error") return false;
       const next = options.truncatedWebmFallback(slot.scene.sources, slot.index, slot.offset,
@@ -331,61 +285,19 @@ export function createMultiview(options) {
       return true;
     }
     video.addEventListener("durationchange", recover);
-    video.addEventListener("ended", () => { if (!recover()) replacement(slot); });
+    video.addEventListener("ended", () => { if (!recover()) navigate(1); });
     video.addEventListener("error", () => {
       if (!slot.scene || video.currentSrc !== slot.url) return;
       const next = slot.index + 1;
       if (next < slot.scene.sources.length) source(slot, next, video.currentTime + slot.offset || slot.resume);
       else fail(slot, "Retry video");
     });
-    slot.controls = mountTileControls({
-      node, video,
-      snapshot: () => ({
-        time: video.currentTime + slot.offset,
-        duration: Number(slot.scene?.files[0]?.duration) || 0,
-        loading: slot.phase === "loading",
-        error: slot.phase === "error",
-        unavailable: !slot.scene,
-        previous: slot.cursor > 0,
-        next: true,
-      }),
-      setPlaying(value) {
-        slot.wantsPlay = value;
-        if (value) {
-          if (slot.phase === "error") retrySlot(slot);
-          else play(slot);
-        } else { video.pause(); present(slot); }
-      },
-      seek(seconds) {
-        if (!slot.scene) return;
-        const duration = Number(slot.scene.files[0]?.duration) || 0;
-        const target = Math.max(0, Math.min(seconds, Math.max(0, duration - 0.1)));
-        const relative = target - slot.offset;
-        const stream = slot.scene.sources[slot.index];
-        const buffered = [video.buffered, video.seekable].every(ranges => {
-          for (let i = 0; i < ranges.length; i++) if (relative >= ranges.start(i) && relative < ranges.end(i)) return true;
-          return false;
-        });
-        if (stream.offset && !buffered) { save(slot); source(slot, slot.index, target); }
-        else video.currentTime = relative;
-      },
-      navigate(direction) {
-        const cursor = slot.cursor + direction;
-        if (cursor >= 0 && cursor < slot.history.length) {
-          slot.cursor = cursor; slot.wantsPlay = true; load(slot, slot.history[cursor]);
-        } else if (direction > 0) { slot.wantsPlay = true; replacement(slot); }
-      },
-      random() { slot.wantsPlay = true; replacement(slot); },
-    }, controlOptions);
     slots.push(slot);
     return slot;
   }
 
   function unmount(slot, keepalive) {
     save(slot, keepalive);
-    if (selected === slot.node) select(options.primaryController.node);
-    if (!slot.video.muted && slot.video.volume > 0) controlOptions.selectAudio(options.primaryController.video);
-    slot.controls.dispose();
     slot.fill.dispose();
     ++slot.generation;
     cancelFrame(slot);
@@ -406,38 +318,38 @@ export function createMultiview(options) {
         else play(slot);
       } else { slot.video.pause(); present(slot); }
     });
-    renderGroup();
+    options.changed();
   }
 
   const progress = setInterval(() => slots.forEach(slot => save(slot)), 15000);
   return {
-    toggleAll,
-    focus() { selectedControls()?.focus(); },
+    toggleAll, navigate, random,
     setCount(count) {
-      if (count > 1) mountPrimary();
-      else unmountPrimary();
+      if (count > 1 && !primaryFill) primaryFill = mountFrameFill(options.primaryController.node, options.primaryController.video);
+      if (count === 1 && primaryFill) { primaryFill.dispose(); primaryFill = null; }
       while (slots.length > count - 1) unmount(slots.pop());
-      while (slots.length < count - 1) {
-        const slot = mount();
-        replacement(slot);
-      }
+      while (slots.length < count - 1) { const slot = mount(); replacement(slot); }
+      queue = count > 1 ? createGridQueue(options.ids(), [options.primary(), ...slots.map(slot => slot.id)]) : null;
       primaryFill?.refresh(); slots.forEach(slot => slot.fill.refresh());
+      options.changed();
     },
     setPlaying,
+    seekBy(delta) { slots.forEach(slot => seekSlot(slot, position(slot) + delta)); },
+    seekFraction(fraction) { slots.forEach(slot => seekSlot(slot, fraction * (Number(slot.scene?.files[0]?.duration) || 0))); },
+    setAudio(volume, muted) {
+      audio = {volume, muted};
+      slots.forEach(slot => { slot.video.volume = volume; slot.video.muted = muted || oneSoundtrack; });
+    },
+    setRate(value) { rate = value; slots.forEach(slot => { slot.video.playbackRate = value; }); },
+    loading: () => slots.some(slot => slot.phase === "loading"),
     suspend(value) {
       suspended = value;
       slots.forEach(slot => { if (value) slot.video.pause(); else play(slot); });
     },
-    primaryChanged(id) {
-      slots.filter(slot => slot.id === id).forEach(replacement);
-    },
-    shuffle() {
-      const ids = randomScenes(options.ids(), slots.length, [options.primary()]);
-      slots.forEach((slot, index) => load(slot, ids[index]));
-    },
+    primaryChanged(id) { slots.filter(slot => slot.id === id).forEach(replacement); },
     dispose(keepalive) {
       clearInterval(progress);
-      unmountPrimary();
+      primaryFill?.dispose(); primaryFill = null;
       while (slots.length) unmount(slots.pop(), keepalive);
     },
   };

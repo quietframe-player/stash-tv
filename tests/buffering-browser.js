@@ -84,9 +84,9 @@ export default async function verifyBuffering(page, options) {
       check(await page.locator("#video").evaluate((video, seconds) => video.paused && Math.abs(video.currentTime - seconds) < 0.12, seconds), "Buffered playback broke paused native seeking at " + seconds);
     }
     const saved = await page.locator("#video").evaluate(video => video.currentTime);
-    await page.locator("#previous").click(); await ready();
+    await page.locator("#more").click(); await page.locator("#previous").click(); await ready();
     await page.locator("#toggle").click();
-    await page.locator("#next").click(); await ready();
+    await page.locator("#more").click(); await page.locator("#next").click(); await ready();
     await page.locator("#toggle").click();
     check(Math.abs(await page.locator("#video").evaluate(video => video.currentTime) - saved) < 1, "Returning to a paused seek used an old checkpoint");
     results.push({ name: "repeated paused seeks and returning to an updated checkpoint keep native behavior", passed: true });
@@ -141,7 +141,7 @@ export default async function verifyBuffering(page, options) {
     await page.waitForTimeout(250);
     check(await page.evaluate(() => window.bufferEvents.filter(event => event.state === "prepared").length) === background, "Hidden-page lifecycle continued preparation");
     await page.evaluate(() => { delete document.hidden; document.dispatchEvent(new Event("visibilitychange")); });
-    await page.locator("#next").click(); await page.locator("#next").click(); await page.locator("#next").click();
+    await page.locator("#more").click(); await page.locator("#next").click(); await page.locator("#more").click(); await page.locator("#next").click(); await page.locator("#more").click(); await page.locator("#next").click();
     await ready();
     check(await scene() === ids[4], "Rapid navigation did not select the last requested scene");
     await page.request.get(options.baseURL + "/_test/delay/off");
