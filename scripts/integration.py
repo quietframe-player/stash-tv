@@ -170,8 +170,9 @@ plugins_path: /config/plugins
                          f"/media/sintel-{length}.mp4"])
                 if args.suite == "grid-buffering":
                     path = media / f"sintel-{length}.mp4"
-                    with path.open("ab") as fixture:
-                        fixture.write(struct.pack(">I4s", 8 + length, b"free") + bytes(length))
+                    unique = path.with_name(path.name + ".unique")
+                    unique.write_bytes(path.read_bytes() + struct.pack(">I4s", 8 + length, b"free") + bytes(length))
+                    unique.replace(path)
             pad_mp4(media / "sintel-40.mp4", 2 * 1024 * 1024, inside_moov=True)
             pad_mp4(media / "sintel-46.mp4", 2 * 1024 * 1024, inside_moov=False)
         api("mutation($input:ScanMetadataInput!){metadataScan(input:$input)}", {
