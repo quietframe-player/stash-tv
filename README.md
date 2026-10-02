@@ -91,6 +91,8 @@ only supports native fullscreen for one video.
 
 Preview images use Stash's generated sprites. They are interval samples, marked `≈`,
 not frame-accurate predictions. After seeking, the preview can show the decoded frame.
+The active preview sprite prepares after the video is ready. A compact time label
+appears while images load or when a sprite is unavailable.
 Generate sprites in Stash if seek previews are missing.
 
 The player prefers the original stream and can fall back to compatible Stash streams.
@@ -108,7 +110,9 @@ Gestures stay on the video area, separate from the seek bar and playback control
 Double taps show a directional ripple and the number of seconds skipped. Each extra
 tap on the same side adds another 10 seconds. Hold-to-2× activates after 200 ms and
 changes speed on the current stream. Drag the seek bar in either direction, then
-release to seek; cancellation keeps the current playback position.
+release to seek; cancellation keeps the current playback position. A seek-bar drag
+pauses playback until release, then restores your playing or paused state. In a grid,
+the shared seek bar pauses all videos together.
 
 During a vertical swipe, the current and incoming views follow your finger.
 Release completes the slide immediately while the next video loads. Desktop vertical

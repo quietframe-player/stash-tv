@@ -127,6 +127,9 @@ export default async function verifyPlayer(page, options) {
     results.push({ name: "Stash navigation launcher preserves selected scene", passed: true });
     await page.goto(options.baseURL + "/plugin/stash-tv/assets/index.html?autoplay=false&scene=" + scene.id + "&seed=1");
     await ready();
+    await page.waitForFunction(url => performance.getEntriesByName(url).length > 0, scene.paths.vtt);
+    assert(await page.locator('#seek-preview').isHidden(), 'Preview warming showed an overlay before interaction');
+    results.push({ name: 'active preview VTT warms after media readiness before first interaction', passed: true });
     assert(await page.locator('#volume-panel').isHidden(), 'Desktop volume should start collapsed');
     await page.locator('#mute').click();
     assert(await page.locator('#volume-panel').isVisible(), 'Desktop volume button did not open controls');
@@ -205,10 +208,30 @@ export default async function verifyPlayer(page, options) {
     await page.waitForTimeout(300);
     assert(await page.locator('#seek-preview').isVisible() && await page.locator('#preview-frame').isHidden(),
       'Missing sprites hid marker labels');
+    await hoverTime(8, '');
+    assert(await page.locator('#seek-preview').isVisible() && await page.locator('#preview-frame').isHidden() &&
+      await page.locator('#preview-time').textContent() === '0:08', 'Missing sprite hid the accurate seek target');
+    results.push({ name: 'missing sprites retain compact target-time feedback without marker labels', passed: true });
     await page.unroute(scene.paths.vtt);
     await page.reload();
     await ready();
     results.push({ name: 'marker labels without sprite images', passed: true });
+    let releasePreview;
+    const previewGate = new Promise(resolve => { releasePreview = resolve; });
+    await page.route(scene.paths.vtt, async route => { await previewGate; await route.continue(); });
+    await page.reload();
+    await ready();
+    await hoverTime(8, '');
+    assert(await page.locator('#seek-preview').isVisible() && await page.locator('#preview-frame').isHidden() &&
+      await page.locator('#preview-time').textContent() === '0:08', 'Slow sprite loading blocked target-time feedback');
+    releasePreview();
+    await page.waitForFunction(() => !document.getElementById('preview-frame').hidden);
+    const previewBounds = await page.locator('#seek-preview').boundingBox();
+    assert(previewBounds.x >= 0 && previewBounds.x + previewBounds.width <= 1280,
+      'Loaded preview overflowed its viewport');
+    await page.screenshot({ path: options.reportDir + '/' + options.browser + '-prepared-preview.png' });
+    await page.unroute(scene.paths.vtt);
+    results.push({ name: 'delayed sprites upgrade time feedback without moving playback', passed: true });
     await seek(0);
     await page.locator("#surface").click({ position: { x: 300, y: 200 } });
     await continues("unmuted original playback", 8000);

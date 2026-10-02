@@ -266,6 +266,19 @@ export default async function verifyMultiview(page, options) {
     check(afterPlayingScrub.every((v,i)=>i===1?v.time>beforePlayingScrub[i].time+Math.min(120,v.duration)*0.1-0.35:
       v.time>=beforePlayingScrub[i].time&&v.time<beforePlayingScrub[i].time+2),'Playing tile scrub moved another feed: '+JSON.stringify({beforePlayingScrub,afterPlayingScrub}));
     pass('tile scrubbing preserves playing intent while the other feeds keep advancing');
+    const sharedBar=await page.locator('#seek').evaluate(el=>{
+      const b=el.getBoundingClientRect(); return {x:b.x+6,y:b.y+b.height/2,width:b.width-12};
+    });
+    const beforeSharedScrub=await sample();
+    await touch('down',sharedBar.x+sharedBar.width*0.3,sharedBar.y,'#seek');
+    await touch('move',sharedBar.x+sharedBar.width*0.4,sharedBar.y,'#seek');
+    await page.waitForTimeout(700);
+    check((await sample()).every((v,i)=>v.paused&&Math.abs(v.time-beforeSharedScrub[i].time)<0.2),
+      'Shared scrub kept a feed playing or sought before release');
+    await touch('up',sharedBar.x+sharedBar.width*0.4,sharedBar.y,'#seek');
+    await playing(4);
+    check((await sample()).every(v=>Math.abs(v.time-v.duration*0.4)<1.5),'Shared scrub did not restore all feeds at the target');
+    pass('shared touch scrubbing pauses all four feeds and restores their playing intent');
     const beforeSwipe=await snapshot();
     await touch('down',195,550); await touch('move',195,420); await page.waitForTimeout(40);
     const offset=await page.locator('#views').evaluate(el=>new DOMMatrix(getComputedStyle(el).transform).m42);

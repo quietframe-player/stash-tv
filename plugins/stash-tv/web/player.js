@@ -255,10 +255,11 @@ async function boot() {
     image: null,
     controller: null,
     time: null,
-    dragging: false,
     pointerId: null,
+    generation: 0,
     frame: 0,
     hideTimer: 0,
+    warmTimer: 0,
   };
   const state = {
     queue: null,
@@ -387,7 +388,7 @@ async function boot() {
     player.classList.remove("idle");
     clearTimeout(state.hideTimer);
     scheduleTimeline();
-    if (state.phase === "playing" && player.dataset.buffering === "false" && !scrub.dragging && scrub.time === null && byId("volume-panel").hidden && byId("more-panel").hidden && byId("grid-seek-panel").hidden)
+    if (state.phase === "playing" && player.dataset.buffering === "false" && scrub.pointerId === null && scrub.time === null && byId("volume-panel").hidden && byId("more-panel").hidden && byId("grid-seek-panel").hidden)
       state.hideTimer = setTimeout(function () {
         player.classList.add("idle");
         byId("surface").focus();
@@ -542,18 +543,18 @@ async function boot() {
       const seconds =
         state.seekTarget !== null
           ? state.seekTarget
-          : scrub.dragging
+          : scrub.pointerId !== null
             ? Number(byId("seek").value)
             : currentTime();
       const label = timelineLabel(seconds);
       if (byId("elapsed").textContent !== label) byId("elapsed").textContent = label;
-      if (!scrub.dragging) byId("seek").value = String(seconds);
+      if (scrub.pointerId === null) byId("seek").value = String(seconds);
       paintSeek();
       if (
         state.phase === "playing" &&
         !video.paused &&
         !state.buffering &&
-        !scrub.dragging &&
+        scrub.pointerId === null &&
         state.seekTarget === null &&
         !player.classList.contains("idle")
       )
@@ -571,13 +572,14 @@ async function boot() {
   }
 
   function resetPreview() {
+    clearTimeout(scrub.warmTimer);
     clearTimeout(state.seekTimer);
     state.seekTarget = null;
     if (scrub.controller) scrub.controller.abort();
     if (scrub.image) scrub.image.src = "";
     cancelAnimationFrame(scrub.frame);
     scrub.frame = 0;
-    finishScrub(false);
+    finishScrub(false, false);
     scrub.cues = [];
     scrub.image = null;
     scrub.status = "idle";
@@ -620,6 +622,7 @@ async function boot() {
       if (generation !== state.generation) return;
       if (!cues.length) throw new Error("No preview frames");
       const image = new Image();
+      image.decoding = "async";
       scrub.image = image;
       await new Promise((resolve, reject) => {
         image.onload = resolve;
@@ -646,12 +649,22 @@ async function boot() {
     }
   }
 
+  function warmPreview() {
+    clearTimeout(scrub.warmTimer);
+    if (scrub.status !== "idle" || state.layout > 1) return;
+    scrub.warmTimer = setTimeout(function () {
+      if (scrub.status === "idle" && state.layout === 1 && state.scene &&
+          !document.hidden && !state.buffering && video.readyState >= 2) loadPreview();
+    }, 300);
+  }
+
   function renderPreview() {
     if (scrub.frame) return;
     scrub.frame = requestAnimationFrame(function () {
       scrub.frame = 0;
       const cue = scrub.time === null ? null : previewAt(scrub.cues, scrub.time);
       const box = byId("seek-preview");
+      if (scrub.time === null) { box.hidden = true; return; }
       const exact = scrub.time !== null && scrub.exactTime === scrub.time;
       const labels = scrub.time === null ? [] : markerLabelsAt(state.markers, scrub.time);
       const label = byId("preview-marker");
@@ -659,16 +672,15 @@ async function boot() {
       label.hidden = !labels.length;
       const hasFrame = exact || (scrub.status === "ready" && !!cue);
       byId("preview-frame").hidden = !hasFrame;
-      if (!hasFrame && !labels.length) {
-        box.hidden = true;
-        return;
-      }
+      box.dataset.frame = String(hasFrame);
       const canvas = byId("preview-exact");
       const frameWidth = exact ? canvas.width : hasFrame ? cue.width : 280;
       const frameHeight = exact ? canvas.height : hasFrame ? cue.height : 158;
       const range = byId("seek");
       const timeline = range.parentElement;
-      const desiredWidth = Math.max(220, Math.min(560, 152 + player.clientWidth * 0.1));
+      const desiredWidth = hasFrame || labels.length
+        ? Math.max(220, Math.min(560, 152 + player.clientWidth * 0.1))
+        : Math.max(88, Math.min(180, 64 + player.clientWidth * 0.03));
       const maxHeight = Math.min(
         Math.max(150, Math.min(320, 110 + player.clientHeight * 0.1)),
         Math.max(1, timeline.getBoundingClientRect().top - 56),
@@ -858,7 +870,7 @@ async function boot() {
 
   function play() {
     state.wantsPlay = true;
-    if (!state.scene || !state.sourceURL || state.resume)
+    if (!state.scene || !state.sourceURL || state.resume || scrub.pointerId !== null)
       return;
     const generation = state.generation;
     video.play().catch(function (error) {
@@ -1045,6 +1057,12 @@ async function boot() {
   }
 
   function toggle() {
+    if (scrub.pointerId !== null) {
+      state.wantsPlay = !state.wantsPlay;
+      multiview?.setPlaying(state.wantsPlay);
+      showControls();
+      return;
+    }
     if (state.layout > 1 && multiview) { multiview.toggleAll(); showControls(); return; }
     if (byId("toggle").disabled) return;
     if (state.phase === "error") {
@@ -1070,6 +1088,7 @@ async function boot() {
       return;
     }
     cancelTouch();
+    finishScrub(false);
     endWheel();
     resetSwipe();
     closeMore();
@@ -1159,6 +1178,7 @@ async function boot() {
     byId("previous").disabled = state.layout === 1 && state.queue.index === 0;
     byId("next").disabled = state.layout === 1 && state.queue.index === state.queue.ids.length - 1;
     warmNeighbours();
+    warmPreview();
   }
 
   function seek(seconds, preview, broadcast = true) {
@@ -1710,7 +1730,7 @@ async function boot() {
     if (document.hidden) { cancelTouch(); endWheel(); closeGridSeek(); }
     multiview?.suspend(document.hidden);
     buffer?.pause(document.hidden || state.buffering || multiview?.loading() || !["ready", "playing", "paused"].includes(state.phase));
-    if (!document.hidden) warmNeighbours();
+    if (!document.hidden) { warmNeighbours(); warmPreview(); if (state.wantsPlay) play(); }
   });
   window.addEventListener("pagehide", function (event) {
     buffer?.pause(true);
@@ -1782,16 +1802,18 @@ async function boot() {
     showPreview(Number(range.value));
   }
 
-  function finishScrub(commit) {
+  function finishScrub(commit, restore = true) {
     if (scrub.pointerId === null) return;
     const range = byId("seek");
     const id = scrub.pointerId;
     const target = Number(range.value);
+    const current = scrub.generation === state.generation;
     scrub.pointerId = null;
-    scrub.dragging = false;
     if (range.hasPointerCapture(id)) range.releasePointerCapture(id);
-    if (commit) seek(target);
+    if (commit && current) seek(target);
     else { hidePreview(); scheduleTimeline(); }
+    if (restore && current && state.wantsPlay && !document.hidden) play();
+    multiview?.suspend(document.hidden);
   }
 
   byId("seek").addEventListener("pointerdown", function (event) {
@@ -1801,8 +1823,10 @@ async function boot() {
     clearTimeout(state.seekTimer);
     state.seekTarget = null;
     scrub.pointerId = event.pointerId;
-    scrub.dragging = true;
+    scrub.generation = state.generation;
     this.setPointerCapture(event.pointerId);
+    video.pause();
+    multiview?.suspend(true);
     updateScrub(event);
   });
   byId("seek").addEventListener("pointermove", function (event) {
@@ -1815,7 +1839,7 @@ async function boot() {
     showPreview(seekPosition(event.clientX, bounds.left, bounds.width, Number(this.max)));
   });
   byId("seek").addEventListener("pointerleave", function () {
-    if (!scrub.dragging) hidePreview();
+    if (scrub.pointerId === null) hidePreview();
   });
   document.addEventListener("pointerup", function (event) {
     if (event.pointerId !== scrub.pointerId) return;
@@ -2058,6 +2082,8 @@ async function boot() {
     capturePreview();
   });
   video.addEventListener("loadeddata", capturePreview);
+  video.addEventListener("loadeddata", warmPreview);
+  video.addEventListener("playing", warmPreview);
   video.addEventListener("ended", function () {
     if (recoverTruncatedStream()) return;
     saveProgress();
