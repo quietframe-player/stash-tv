@@ -45,10 +45,20 @@ One shared control bar handles the whole player; no video needs to be selected o
 Play/pause, volume, keyboard shortcuts, double-tap seeking, swipes, and trackpad scrolling
 apply to every video. Relative seeking moves each video by the same number of seconds.
 The grid seek bar uses percentages to seek each video's own duration.
-For independent seeking, open **More → Seek videos**. A temporary panel shows a
-thumbnail, elapsed time, duration, and seek bar for each video. Scrubbing a row
+For independent seeking, hover over the **Seek videos** icon on desktop or tap it
+on mobile. A temporary panel shows a thumbnail, elapsed time, duration, and seek
+bar for each video. Scrubbing a row
 changes only that video and preserves playback intent. Close the panel to return
 to the unobstructed grid. No tile needs to be focused.
+Drag left or right on a tile to scrub that video. The time indicator follows the
+drag; releasing commits one seek. Other videos keep their positions and playing
+state. Vertical swipes still navigate the whole grid.
+
+LG webOS TVs support one native video stream at a time. Split controls are hidden
+on those TVs, and a split-layout URL opens in single view. TV multiview requires
+a server to combine the videos into one stream; this plugin does not provide that
+server. See [LG's developer response](https://forum.webostv.developer.lge.com/t/how-to-achieve-simultaneous-dual-video-playback-dash-hls-on-webos/28170).
+
 Previous, Random, Next, and the two/four-video layouts are inside More.
 Navigation keeps a history of complete grids, so Previous restores all feeds together.
 Desktop soundtracks share one mute and volume setting. On iPhone and iPad, only the first
@@ -108,20 +118,24 @@ drags return to the current video. Scrolling over controls does not change video
 
 The player prepares two videos ahead and one behind in single view, or two complete
 groups ahead and one behind in multiview, in that order. For original MP4
-streams, it reads the index and buffers up to five seconds around the saved position,
+streams, it reads the index and buffers up to thirty seconds from the saved position,
 starting at the preceding keyframe. Preparation is serial, cancels obsolete work,
 and yields while the current video loads or seeks. Hidden pages stop preparation.
 A local service worker feeds the prepared ranges to the existing native video element.
 The cache holds at most four items in single view or sixteen in multiview, with a
-16 MiB limit per item and a shared 64 MiB total limit. When it fills, the nearest
+64 MiB limit per item and a shared 1 GiB total limit. The disk budget shrinks when
+necessary to leave 20% of the browser's estimated origin quota free, accounting for
+other data on that origin. Cached ranges are stored and read in 2 MiB chunks;
+playback does not load the full disk cache into memory. When it fills, the nearest
 upcoming videos take priority. Entries expire after ten minutes and are cleared
 when the page closes. Stored cache keys hash the stream URL;
 the cache index does not persist its authorization parameters.
 MP4 headers can span range requests or follow a large padding box. Their read budget
-is 8 MiB within the same 16 MiB item limit. A leading empty edit uses the movie's
+is 8 MiB within the same 64 MiB item limit. A leading empty edit uses the movie's
 timing scale when aligning the checkpoint frame.
 
 A worker briefly decodes the exact checkpoint frame when WebCodecs supports the codec,
+preferring software decoding to leave hardware decoders available for playback,
 then releases its decoder. Returning to a watched scene can reuse its last decoded
 frame at that same checkpoint. This frame stays visible until playback is ready at
 the saved position. Grid panes retain their previous decoded frame when a prepared

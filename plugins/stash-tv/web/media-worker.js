@@ -1,5 +1,7 @@
 const CACHE = "stash-tv-media-v1";
-const LIMIT = 64 * 1024 * 1024;
+const LIMIT = 1024 * 1024 * 1024;
+const ITEM_LIMIT = 64 * 1024 * 1024;
+const CHUNK = 2 * 1024 * 1024;
 const TTL = 10 * 60 * 1000;
 const root = new URL("./_media/", self.location.href);
 let writes = Promise.resolve();
@@ -20,22 +22,32 @@ async function entries(cache) {
 async function remove(cache, entry) {
   await Promise.all([cache.delete(entry.key), ...entry.ranges.map(range => cache.delete(rangeKey(entry, range)))]);
 }
-async function prune(cache, wanted, limit = LIMIT, slots = 4) {
+async function budget(cache) {
+  try {
+    const { quota, usage } = await navigator.storage.estimate();
+    if (Number.isFinite(quota) && quota > 0 && Number.isFinite(usage)) {
+      const cached = (await entries(cache)).reduce((sum, entry) => sum + entry.bytes, 0);
+      return Math.max(0, Math.min(LIMIT, Math.floor(quota * 0.8 - Math.max(0, usage - cached))));
+    }
+  } catch {}
+  return LIMIT;
+}
+async function prune(cache, wanted, limit, slots = 4) {
   const list = (await entries(cache)).sort((a, b) => wanted
     ? wanted.indexOf(a.id) - wanted.indexOf(b.id) : b.stored - a.stored);
   let bytes = 0, count = 0;
+  const keep = new Set(), retained = [];
   for (const entry of list) {
     if (Date.now() - entry.stored > TTL || (wanted && !wanted.includes(entry.id)) ||
         bytes + entry.bytes > limit || count >= slots) await remove(cache, entry);
-    else { bytes += entry.bytes; count++; }
-  }
-  const keep = new Set();
-  for (const entry of await entries(cache)) {
-    keep.add(entry.key);
-    for (const range of entry.ranges) keep.add(rangeKey(entry, range));
+    else {
+      bytes += entry.bytes; count++;
+      keep.add(entry.key);
+      for (const range of entry.ranges) keep.add(rangeKey(entry, range));
+      retained.push({ signature: entry.signature, seconds: entry.seconds });
+    }
   }
   for (const request of await cache.keys()) if (!keep.has(request.url)) await cache.delete(request);
-  const retained = (await entries(cache)).map(entry => ({ signature: entry.signature, seconds: entry.seconds }));
   return { bytes, count, retained };
 }
 self.addEventListener("install", event => event.waitUntil(self.skipWaiting()));
@@ -46,37 +58,45 @@ self.addEventListener("message", event => {
   writes = writes.catch(() => {}).then(async () => {
     const cache = await caches.open(CACHE);
     const input = event.data;
+    const limit = await budget(cache);
     const wanted = await Promise.all((input.urls || []).slice(0, 16).map(hash));
     const slots = Math.max(4, wanted.length);
-    if (input.type === "retain") return prune(cache, wanted, LIMIT, slots);
+    if (input.type === "retain") return { ...await prune(cache, wanted, limit, slots), limit };
     if (input.type === "store") {
       const value = input.prepared;
       const url = new URL(value.url);
       if (url.origin !== self.location.origin || !/\/scene\/\d+\/stream$/.test(url.pathname) ||
-          value.bytes > 16 * 1024 * 1024) throw new Error("Invalid prepared stream");
+          !Number.isSafeInteger(value.bytes) || value.bytes <= 0 || value.bytes > ITEM_LIMIT ||
+          value.ranges.reduce((sum, range) => sum + range.data.byteLength, 0) !== value.bytes ||
+          value.ranges.some(range => range.end - range.start + 1 !== range.data.byteLength || range.start < 0 || range.end >= value.total))
+        throw new Error("Invalid prepared stream");
       const id = await hash(url.href);
       const priority = wanted.indexOf(id);
       const higher = (await entries(cache)).filter(entry => entry.id !== id &&
         Date.now() - entry.stored <= TTL && wanted.includes(entry.id) && wanted.indexOf(entry.id) < priority);
-      if (priority < 0 || higher.length >= slots || higher.reduce((sum, entry) => sum + entry.bytes, 0) + value.bytes > LIMIT)
-        return { ...await prune(cache, wanted, LIMIT, slots), stored: false };
+      if (priority < 0 || higher.length >= slots || higher.reduce((sum, entry) => sum + entry.bytes, 0) + value.bytes > limit)
+        return { ...await prune(cache, wanted, limit, slots), limit, stored: false };
       const old = await cache.match(key(id));
       if (old) await remove(cache, { ...(await old.json()), key: key(id) });
-      await prune(cache, wanted, LIMIT - value.bytes, slots - 1);
-      const ranges = value.ranges.map(range => ({ start: range.start, end: range.end }));
       const revision = crypto.getRandomValues(new Uint32Array(4)).join("-");
-      const entry = { id, revision, ranges };
+      const entry = { id, revision, ranges: [] };
+      await prune(cache, wanted, limit - value.bytes, slots - 1);
       try {
-        for (const range of value.ranges) await cache.put(rangeKey(entry, range), new Response(range.data));
+        for (const range of value.ranges) for (let offset = 0; offset < range.data.byteLength; offset += CHUNK) {
+          const data = new Uint8Array(range.data, offset, Math.min(CHUNK, range.data.byteLength - offset));
+          const part = { start: range.start + offset, end: range.start + offset + data.byteLength - 1 };
+          entry.ranges.push(part);
+          await cache.put(rangeKey(entry, part), new Response(data));
+        }
         await cache.put(key(id), new Response(JSON.stringify({ id, revision, total: value.total, mime: value.mime,
-          modified: value.modified, ranges, bytes: value.bytes, signature: value.signature, seconds: value.seconds, stored: Date.now() }),
+          modified: value.modified, ranges: entry.ranges, bytes: value.bytes, signature: value.signature, seconds: value.seconds, stored: Date.now() }),
         { headers: { "Content-Type": "application/json" } }));
       } catch (error) {
         await remove(cache, { ...entry, key: key(id) });
         throw error;
       }
     }
-    return { ...await prune(cache, wanted, LIMIT, slots), stored: true };
+    return { ...await prune(cache, wanted, limit, slots), limit, stored: true };
   });
   event.waitUntil(writes.then(result => port.postMessage({ result }), error => port.postMessage({ error: error.message })));
 });
@@ -98,12 +118,6 @@ self.addEventListener("fetch", event => {
     const ifRange = request.headers.get("If-Range");
     if (Date.now() - entry.stored > TTL || start > end || !ranges.length ||
         (ifRange && ifRange !== entry.modified)) return fetch(request);
-    const chunks = [];
-    for (const range of ranges) {
-      const response = await cache.match(rangeKey(entry, range));
-      if (!response) return fetch(request);
-      chunks.push({ ...range, data: new Uint8Array(await response.arrayBuffer()) });
-    }
     const controller = new AbortController();
     let cursor = start, reader = null, remaining = 0;
     const stream = new ReadableStream({
@@ -116,15 +130,20 @@ self.addEventListener("fetch", event => {
             if (remaining !== 0) throw new Error("Incomplete original stream");
           }
           if (cursor > end) { output.close(); return; }
-          const chunk = chunks.find(range => range.start <= cursor && range.end >= cursor);
+          const chunk = ranges.find(range => range.start <= cursor && range.end >= cursor);
           if (chunk) {
             const last = Math.min(end, chunk.end);
-            output.enqueue(chunk.data.subarray(cursor - chunk.start, last - chunk.start + 1));
-            cursor = last + 1;
-            return;
+            const response = await cache.match(rangeKey(entry, chunk));
+            if (response) {
+              const data = new Uint8Array(await response.arrayBuffer());
+              if (data.byteLength !== chunk.end - chunk.start + 1) throw new Error("Incomplete cached range");
+              output.enqueue(data.subarray(cursor - chunk.start, last - chunk.start + 1));
+              cursor = last + 1;
+              return;
+            }
           }
-          const next = chunks.find(range => range.start > cursor);
-          const last = next ? Math.min(end, next.start - 1) : end;
+          const next = ranges.find(range => range.start > cursor);
+          const last = chunk ? Math.min(end, chunk.end) : next ? Math.min(end, next.start - 1) : end;
           const headers = new Headers(request.headers);
           headers.set("Range", "bytes=" + cursor + "-" + last);
           const response = await fetch(request.url, { headers, credentials: "same-origin", signal: controller.signal });

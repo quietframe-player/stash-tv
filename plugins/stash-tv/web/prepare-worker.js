@@ -1,6 +1,6 @@
 import { createFile, DataStream } from "./mp4box-parser.js?v=2.4.1";
 
-const ITEM_LIMIT = 16 * 1024 * 1024;
+const ITEM_LIMIT = 64 * 1024 * 1024;
 const INDEX_LIMIT = 8 * 1024 * 1024;
 const PAGE = 1024 * 1024;
 let active = null;
@@ -85,7 +85,7 @@ async function prepare(input, signal) {
       const sample = samples[i];
       const seconds = sample.cts / sample.timescale - delay;
       if (item.type !== "video" && seconds + sample.duration / sample.timescale < target) continue;
-      if (seconds > target + 5.5) break;
+      if (seconds > target + 30) break;
       start = Math.min(start, sample.offset);
       end = Math.max(end, sample.offset + sample.size - 1);
     }
@@ -106,7 +106,8 @@ async function prepare(input, signal) {
     try {
       const sample = track.samples[first];
       const box = sample.description.avcC || sample.description.hvcC || sample.description.av1C;
-      const config = { codec: videoInfo.codec, codedWidth: videoInfo.video.width, codedHeight: videoInfo.video.height };
+      const config = { codec: videoInfo.codec, codedWidth: videoInfo.video.width, codedHeight: videoInfo.video.height,
+        hardwareAcceleration: "prefer-software" };
       if (box) {
         const stream = new DataStream(undefined, 0, DataStream.BIG_ENDIAN);
         box.write(stream);
@@ -165,7 +166,7 @@ self.onmessage = async event => {
   active?.abort();
   const controller = new AbortController();
   active = controller;
-  const timer = setTimeout(() => controller.abort(), 15000);
+  const timer = setTimeout(() => controller.abort(), 30000);
   const token = event.data.token;
   try {
     const prepared = await prepare(event.data.item, controller.signal);

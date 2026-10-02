@@ -67,14 +67,14 @@ export default async function verifyMultiview(page, options) {
     const area=value.tiles.reduce((n,t)=>n+t.width*t.height,0);
     check(value.tiles.length===count&&Math.abs(area-value.root.width*value.root.height)<1&&value.gap==='0px','Grid gaps: '+JSON.stringify(value));
     check(value.tiles.every(t=>t.border==='0px'&&t.fit==='cover'),'Grid borders or letterboxing');
-    check(value.tileControls===0&&value.buttons.length===4,'Per-video controls or redundant buttons: '+JSON.stringify(value.buttons));
+    check(value.tileControls===0&&value.buttons.length===5,'Per-video controls or redundant buttons: '+JSON.stringify(value.buttons));
     check(value.buttons.every(b=>b.x>=0&&b.right<=value.root.width+0.1&&b.icons.length===1&&b.icons.every(i=>i.width===24&&i.height===24)),'Buttons overflow or icons resize: '+JSON.stringify(value.buttons));
     return value;
   };
   const filled = async count => {
     await page.waitForFunction(count=>document.querySelectorAll('#views > .view').length===count&&[...document.querySelectorAll('#views > .view')].every(v=>Number(v.style.getPropertyValue('--frame-scale'))>1.2),count,{timeout:5000});
   };
-  let mobile=null;
+  let mobile=null, tv=null;
   try {
     await page.setViewportSize({width:1200,height:800});
     const {findScenes}=await api('{findScenes(filter:{sort:"random_17",direction:DESC,per_page:-1}){scenes{id files{path}}}}');
@@ -95,6 +95,15 @@ export default async function verifyMultiview(page, options) {
     await page.waitForFunction(()=>document.getElementById('player').dataset.buffering==='false'&&[...document.querySelectorAll('.extra-view')].every(v=>v.dataset.phase==='playing'),null,{timeout:5000});
     pass('advancing video time clears a late waiting event without another canplay event');
     await paused(4);
+    check(await page.locator('#seek-videos').evaluate(button => !button.closest('#more-panel')), 'Seek videos is still inside More');
+    await page.locator('#seek-videos').hover();
+    check(await page.locator('#grid-seek-panel').isVisible(), 'Hover did not open independent seek controls');
+    await page.locator('.grid-seek-range').nth(2).hover();
+    await page.waitForTimeout(220);
+    check(await page.locator('#grid-seek-panel').isVisible(), 'Hover panel closed while entering its seek controls');
+    await page.mouse.move(10,10); await page.waitForTimeout(220);
+    check(await page.locator('#grid-seek-panel').isHidden(), 'Hover panel did not dismiss after leaving');
+    pass('dedicated seek icon opens on hover and retains the panel while using its controls');
     await click('#seek-videos');
     check(await page.locator('#grid-seek-panel').isVisible() && await page.locator('.grid-seek-range').count()===4,'Missing on-demand seek controls');
     for (const [index,fraction] of [[0,0.35],[2,0.6],[1,0.2],[2,0.3]]) {
@@ -109,6 +118,21 @@ export default async function verifyMultiview(page, options) {
     await page.keyboard.press('Escape');
     check(await page.locator('#grid-seek-panel').isHidden(),'Seek panel did not close');
     pass('on-demand per-video seek controls target one video and preserve the other paused positions');
+    for (const [index,fraction] of [[0,0.15],[2,-0.1],[3,0.18]]) {
+      const before = await sample();
+      const b = await page.locator('#views > .view').nth(index).boundingBox();
+      const x = b.x + b.width * 0.5, y = b.y + b.height * 0.35;
+      await page.mouse.move(x,y); await page.mouse.down();
+      await page.mouse.move(x + b.width * fraction,y + 1,{steps:8});
+      check(await page.locator('.tile-seek-feedback').isVisible(), 'Tile scrub did not show its minimal time indicator');
+      const moving = await sample();
+      check(moving.every((v,i)=>Math.abs(v.time-before[i].time)<0.05), 'Tile scrub requested a seek before release');
+      await page.mouse.up(); await ready(4);
+      const after = await sample();
+      check(after.every((v,i)=>Math.abs(v.time-(i===index?Math.max(0,Math.min(before[i].time+fraction*Math.min(120,v.duration),v.duration-0.1)):before[i].time))<0.3&&v.paused),
+        'Mouse tile scrub affected the wrong video or pause intent: '+JSON.stringify({index,before,after}));
+    }
+    pass('mouse drags scrub the touched tile once on release without tile focus or other playback changes');
     await page.locator('#more').focus();
     await position(0.2,4); await delta('d',10,4); await delta('a',-10,4); await delta('ArrowRight',10,4); await delta('ArrowLeft',-10,4);
     pass('D/A and Left/Right seek all videos without focusing a tile');
@@ -163,7 +187,7 @@ export default async function verifyMultiview(page, options) {
     check(await page.locator('#volume-panel').isHidden(),'Mobile unmute opened a popup');
     await playing(4);
     pass('iPhone unmute keeps one soundtrack and all four videos playing');
-    pass('portrait widths 320/390/430 keep four fixed-size controls and one shared mute button');
+    pass('portrait widths 320/390/430 keep five fixed-size controls including the dedicated seek button');
     await page.screenshot({path:options.reportDir+'/'+options.browser+'-multiview-mobile-controls.png'});
     await page.setViewportSize({width:844,height:390}); await layout(4); await page.locator('#mute').tap();
     check(await page.locator('#volume-panel').isHidden(),'Landscape phone exposed volume slider'); await page.locator('#mute').tap();
@@ -172,7 +196,7 @@ export default async function verifyMultiview(page, options) {
     const cdp=options.browser==='chrome'?await mobile.newCDPSession(page):null;
     if (!cdp) await page.evaluate(()=>{Element.prototype.setPointerCapture=function(){};});
     const touch=async(type,x=195,y=350,target='#surface')=>{
-      if(cdp) await cdp.send('Input.dispatchTouchEvent',{type:{down:'touchStart',move:'touchMove',up:'touchEnd'}[type],touchPoints:type==='up'?[]:[{x,y,id:1}]});
+      if(cdp) await cdp.send('Input.dispatchTouchEvent',{type:{down:'touchStart',move:'touchMove',up:'touchEnd',cancel:'touchCancel'}[type],touchPoints:['up','cancel'].includes(type)?[]:[{x,y,id:1}]});
       else await page.locator(target).dispatchEvent('pointer'+type,{pointerType:'touch',pointerId:1,isPrimary:true,clientX:x,clientY:y,bubbles:true,cancelable:true});
     };
     await touch('down'); await touch('up'); await page.waitForTimeout(400); await paused(4);
@@ -185,7 +209,7 @@ export default async function verifyMultiview(page, options) {
     }
     pass('repeated mobile seek drags update all paused videos');
     const beforePanel=await sample();
-    await page.locator('#more').tap(); await page.locator('#seek-videos').tap();
+    await page.locator('#seek-videos').tap();
     check((await sample()).every((v,i)=>v.paused&&Math.abs(v.time-beforePanel[i].time)<0.05),'Opening seek controls triggered a video or timeline underneath');
     const single=page.locator('.grid-seek-range').nth(2);
     for(const fraction of [0.55,0.25,0.45]) {
@@ -206,6 +230,23 @@ export default async function verifyMultiview(page, options) {
     check(await page.locator('#grid-seek-panel').isHidden(),'Mobile seek panel did not close');
     check((await sample()).every(v=>v.paused),'Closing mobile seek controls changed pause intent: '+JSON.stringify(await sample()));
     pass('repeated mobile per-video scrubs work without tile focus or changing other videos');
+    for (const [index,fraction] of [[1,0.2],[3,-0.15],[0,0.1],[2,-0.12]]) {
+      await position(0.4,4);
+      const before = await sample();
+      const b = await page.locator('#views > .view').nth(index).boundingBox();
+      const x = b.x+b.width*0.5, y = b.y+b.height*0.3;
+      await touch('down',x,y); await touch('move',x+b.width*fraction,y+1);
+      check(await page.locator('.tile-seek-feedback').isVisible(), 'Touch scrub did not show the target time');
+      check((await sample()).every((v,i)=>Math.abs(v.time-before[i].time)<0.05), 'Touch scrub sought before release');
+      await touch('up',x+b.width*fraction,y+1); await ready(4);
+      const after = await sample();
+      check(after.every((v,i)=>Math.abs(v.time-(i===index?before[i].time+fraction*Math.min(120,v.duration):before[i].time))<0.35&&v.paused),
+        'Touch tile scrub affected another feed or pause intent: '+JSON.stringify({index,before,after}));
+      await touch('down',x,y); await touch('move',x+b.width*0.2,y);
+      await touch('cancel',x+b.width*0.2,y); await ready(4);
+      check((await sample()).every((v,i)=>v.paused&&Math.abs(v.time-after[i].time)<0.05),'Cancelled touch scrub changed playback');
+    }
+    pass('mobile drags scrub each tile independently and cancellation leaves all positions unchanged');
     await position(0.2,4);
     await page.locator('#toggle').tap(); await playing(4); const beforeTap=await sample();
     await touch('down',335); await touch('up',335); await touch('down',335); await touch('up',335);
@@ -216,6 +257,15 @@ export default async function verifyMultiview(page, options) {
     await touch('down'); await page.waitForFunction(()=>[...document.querySelectorAll('#views video')].every(v=>v.playbackRate===2));
     await touch('up'); await page.waitForFunction(()=>[...document.querySelectorAll('#views video')].every(v=>v.playbackRate===1));
     pass('hold-to-play 2x accelerates every video and restores all rates on release');
+    const beforePlayingScrub=await sample();
+    const box=await page.locator('#views > .view').nth(1).boundingBox();
+    const tx=box.x+box.width*0.4,ty=box.y+box.height*0.3;
+    await touch('down',tx,ty); await touch('move',tx+box.width*0.1,ty); await touch('up',tx+box.width*0.1,ty);
+    await ready(4); await playing(4);
+    const afterPlayingScrub=await sample();
+    check(afterPlayingScrub.every((v,i)=>i===1?v.time>beforePlayingScrub[i].time+Math.min(120,v.duration)*0.1-0.35:
+      v.time>=beforePlayingScrub[i].time&&v.time<beforePlayingScrub[i].time+2),'Playing tile scrub moved another feed: '+JSON.stringify({beforePlayingScrub,afterPlayingScrub}));
+    pass('tile scrubbing preserves playing intent while the other feeds keep advancing');
     const beforeSwipe=await snapshot();
     await touch('down',195,550); await touch('move',195,420); await page.waitForTimeout(40);
     const offset=await page.locator('#views').evaluate(el=>new DOMMatrix(getComputedStyle(el).transform).m42);
@@ -229,10 +279,20 @@ export default async function verifyMultiview(page, options) {
     await page.locator('#mute').tap(); check(await page.locator('#volume-panel').isHidden(),'Single mobile view revived volume popup');
     pass('portrait pairs have no seam and returning to single keeps mobile mute behavior');
     await page.goto('about:blank'); page=desktop;
+    tv=await page.context().browser().newContext({userAgent:'Mozilla/5.0 (Web0S; Linux/SmartTV) AppleWebKit/537.36 Chrome/87.0.4280.88 Large Screen Safari/537.36 SmartTV/6.0'});
+    const tvPage=await tv.newPage(),tvRequests=[];
+    tvPage.on('request',request=>tvRequests.push(request.url()));
+    await tvPage.goto(url+'&layout=4');
+    await tvPage.waitForFunction(()=>document.getElementById('player').dataset.videoReady==='true');
+    check(await tvPage.locator('video').count()===1&&await tvPage.locator('#layout-two').isHidden()&&await tvPage.locator('#layout-four').isHidden(),
+      'webOS entered an unsupported multi-decoder layout');
+    check(await tvPage.evaluate(()=>!new URL(location.href).searchParams.has('layout'))&&!tvRequests.some(url=>url.includes('/multiview.js')),
+      'webOS kept the split layout or loaded unused split code');
+    pass('LG webOS split URLs recover to one stream without loading grid code or unsupported controls');
     check(errors.length===0,JSON.stringify(errors)); pass('no browser JavaScript errors');
     return {browser:options.browser,passed:true,results};
   } catch(error) {
     await page.screenshot({path:options.reportDir+'/'+options.browser+'-multiview-failure.png'}).catch(()=>{});
     return {browser:options.browser,passed:false,results,error:String(error),errors,videos:await sample().catch(()=>[])};
-  } finally {if(mobile) await mobile.close();}
+  } finally {if(mobile) await mobile.close();if(tv) await tv.close();}
 }

@@ -37,7 +37,7 @@ export default async function verifyBuffering(page, options) {
     await page.waitForFunction(ids => ids.every(id => window.bufferEvents.some(event => event.state === "prepared" && event.id === id)), [ids[2], ids[3], ids[0]]);
     const prepared = await page.evaluate(() => window.bufferEvents.filter(event => event.state === "prepared"));
     check(prepared.slice(0, 3).map(event => event.id).join() === [ids[2], ids[3], ids[0]].join(), "Preparation order was not two next, then previous: " + JSON.stringify(prepared));
-    check(prepared.every(event => event.bytes <= 16 * 1024 * 1024 && event.cacheBytes <= 64 * 1024 * 1024 && event.entries <= 4), "Preparation exceeded cache limits");
+    check(prepared.every(event => event.bytes <= 64 * 1024 * 1024 && event.cacheBytes <= 1024 ** 3 && event.entries <= 4), "Preparation exceeded cache limits");
     check(prepared.every(event => Math.abs(event.frameTime - 20) < 0.05), "Prepared frame did not match the native 20-second checkpoint: " + JSON.stringify(prepared));
     const indexes = await cache();
     check(indexes.length === 3 && indexes.every(index => index.ranges.length >= 2), "Missing prepared media ranges");

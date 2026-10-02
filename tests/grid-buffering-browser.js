@@ -55,7 +55,8 @@ export default async function verifyGridBuffering(page, options) {
       await page.waitForFunction(ids => ids.every(id => window.bufferEvents.some(event => event.state === "prepared" && event.id === id)), expected, { timeout: 10000 });
       const prepared = await page.evaluate(() => window.bufferEvents.filter(event => event.state === "prepared"));
       check(JSON.stringify(prepared.slice(0, expected.length).map(event => event.id)) === JSON.stringify(expected), "Grid did not prepare two groups ahead then previous: " + JSON.stringify(prepared));
-      check(prepared.every(event => event.bytes <= 16 * 1024 * 1024 && event.cacheBytes <= 64 * 1024 * 1024 && event.entries <= count * 4), "Grid buffering exceeded byte or entry limits");
+      check(prepared.every(event => event.bytes <= 64 * 1024 * 1024 && event.cacheBytes <= event.cacheLimit &&
+        event.cacheLimit > 64 * 1024 * 1024 && event.cacheLimit <= 1024 ** 3 && event.entries <= count * 4), "Grid buffering exceeded byte or entry limits");
       const retained = await indexes();
       check(retained.length === expected.length, "Grid evicted prepared neighbors: " + retained.length + "/" + expected.length);
       check(await page.locator("video").count() === count, "Buffering added hidden native video players");
@@ -66,7 +67,8 @@ export default async function verifyGridBuffering(page, options) {
         else if (["prepared", "cancelled", "skipped"].includes(event.state)) active--;
       }
       check(maximum === 1 && active === 0, "Preparation was not serial: " + JSON.stringify(events));
-      results.push({ name: count + " videos prepare two full groups ahead and one behind serially within 64 MiB", passed: true, current, prepared });
+      check(retained.every(item => item.ranges.every(range => range.end - range.start + 1 <= 2 * 1024 * 1024)), "Native cache chunks exceed 2 MiB");
+      results.push({ name: count + " videos prepare two full groups ahead and one behind serially within 1 GiB", passed: true, current, prepared });
 
       await page.request.get(options.baseURL + "/_test/reset");
       await page.evaluate(() => { window.gridHandoff.hold = true; });
@@ -113,19 +115,23 @@ export default async function verifyGridBuffering(page, options) {
       });
       await request({type: "retain", urls: []});
       const stored = [];
-      for (const index of [4, 3, 2, 1, 0, 4]) {
-        const bytes = 16 * 1024 * 1024;
+      for (const index of [4, 3, 2, 1, 0]) {
+        const bytes = 32 * 1024 * 1024;
         stored.push(await request({type: "store", urls, prepared: {
           url: urls[index], bytes, total: bytes, mime: "video/mp4", modified: "", signature: String(index), seconds: 0,
           ranges: [{start: 0, end: bytes - 1, data: new ArrayBuffer(bytes)}],
         }}));
       }
-      return stored;
+      const cache = await caches.open("stash-tv-media-v1");
+      const indexes = await Promise.all((await cache.keys()).filter(key => key.url.endsWith("/index")).map(async key => (await cache.match(key)).json()));
+      const retained = await request({type: "retain", urls: urls.slice(0,4)});
+      return {stored, retained, largestChunk: Math.max(...indexes.flatMap(item => item.ranges.map(range => range.end - range.start + 1)))};
     });
-    check(budget.slice(0, 5).every(value => value.stored) && !budget[5].stored, "Cache did not reject the farther item at its byte limit");
-    check(budget.every(value => value.bytes <= 64 * 1024 * 1024) && budget[5].bytes === 64 * 1024 * 1024 &&
-      budget[5].retained.map(item => item.signature).sort().join() === "0,1,2,3", "Cache evicted nearer videos instead of preserving priority: " + JSON.stringify(budget));
-    results.push({name: "full 64 MiB cache evicts farther videos and rejects lower-priority work", passed: true});
+    check(budget.stored.every(value => value.stored && value.bytes <= value.limit && value.limit <= 1024 ** 3) && budget.stored.at(-1).bytes === 160 * 1024 * 1024,
+      "Browser cache did not use the increased capacity: " + JSON.stringify(budget));
+    check(budget.largestChunk === 2 * 1024 * 1024 && budget.retained.bytes === 128 * 1024 * 1024 &&
+      budget.retained.retained.map(item => item.signature).sort().join() === "0,1,2,3", "Retired video ranges were not pruned: " + JSON.stringify(budget));
+    results.push({name: "browser retains 160 MiB in bounded chunks and prunes retired videos", passed: true, budget});
     const replacement = await page.evaluate(async () => {
       const url = location.origin + "/scene/1/stream?cache_replacement=1";
       const request = prepared => new Promise((resolve, reject) => {
