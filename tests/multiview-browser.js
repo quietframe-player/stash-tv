@@ -91,6 +91,9 @@ export default async function verifyMultiview(page, options) {
     check((await snapshot()).slice(0,2).every((id,i)=>id===two[i]),'Expanding restarted existing feeds');
     await page.screenshot({path:options.reportDir+'/'+options.browser+'-multiview-four.png'});
     pass('four scenes fill a gap-free grid and encoded padding is cropped');
+    await page.evaluate(()=>[...document.querySelectorAll('.extra-view video')].forEach(v=>v.dispatchEvent(new Event('waiting'))));
+    await page.waitForFunction(()=>document.getElementById('player').dataset.buffering==='false'&&[...document.querySelectorAll('.extra-view')].every(v=>v.dataset.phase==='playing'),null,{timeout:5000});
+    pass('advancing video time clears a late waiting event without another canplay event');
     await paused(4);
     await click('#seek-videos');
     check(await page.locator('#grid-seek-panel').isVisible() && await page.locator('.grid-seek-range').count()===4,'Missing on-demand seek controls');
