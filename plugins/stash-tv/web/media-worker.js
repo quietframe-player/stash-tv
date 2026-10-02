@@ -9,13 +9,16 @@ async function hash(url) {
   return [...new Uint8Array(bytes)].map(byte => byte.toString(16).padStart(2, "0")).join("");
 }
 function key(id, part = "index") { return new URL(id + "/" + part, root).href; }
+function rangeKey(entry, range) {
+  return key(entry.id, (entry.revision ? entry.revision + "/" : "") + range.start);
+}
 async function entries(cache) {
   const keys = await cache.keys();
   const indexes = keys.filter(request => request.url.endsWith("/index"));
   return Promise.all(indexes.map(async request => ({ ...(await (await cache.match(request)).json()), key: request.url })));
 }
 async function remove(cache, entry) {
-  await Promise.all([cache.delete(entry.key), ...entry.ranges.map(range => cache.delete(key(entry.id, range.start)))]);
+  await Promise.all([cache.delete(entry.key), ...entry.ranges.map(range => cache.delete(rangeKey(entry, range)))]);
 }
 async function prune(cache, wanted, limit = LIMIT, slots = 4) {
   const list = (await entries(cache)).sort((a, b) => wanted
@@ -29,7 +32,7 @@ async function prune(cache, wanted, limit = LIMIT, slots = 4) {
   const keep = new Set();
   for (const entry of await entries(cache)) {
     keep.add(entry.key);
-    for (const range of entry.ranges) keep.add(key(entry.id, range.start));
+    for (const range of entry.ranges) keep.add(rangeKey(entry, range));
   }
   for (const request of await cache.keys()) if (!keep.has(request.url)) await cache.delete(request);
   const retained = (await entries(cache)).map(entry => ({ signature: entry.signature, seconds: entry.seconds }));
@@ -61,13 +64,15 @@ self.addEventListener("message", event => {
       if (old) await remove(cache, { ...(await old.json()), key: key(id) });
       await prune(cache, wanted, LIMIT - value.bytes, slots - 1);
       const ranges = value.ranges.map(range => ({ start: range.start, end: range.end }));
+      const revision = crypto.getRandomValues(new Uint32Array(4)).join("-");
+      const entry = { id, revision, ranges };
       try {
-        for (const range of value.ranges) await cache.put(key(id, range.start), new Response(range.data));
-        await cache.put(key(id), new Response(JSON.stringify({ id, total: value.total, mime: value.mime,
+        for (const range of value.ranges) await cache.put(rangeKey(entry, range), new Response(range.data));
+        await cache.put(key(id), new Response(JSON.stringify({ id, revision, total: value.total, mime: value.mime,
           modified: value.modified, ranges, bytes: value.bytes, signature: value.signature, seconds: value.seconds, stored: Date.now() }),
         { headers: { "Content-Type": "application/json" } }));
       } catch (error) {
-        await remove(cache, { id, key: key(id), ranges });
+        await remove(cache, { ...entry, key: key(id) });
         throw error;
       }
     }
@@ -95,7 +100,7 @@ self.addEventListener("fetch", event => {
         (ifRange && ifRange !== entry.modified)) return fetch(request);
     const chunks = [];
     for (const range of ranges) {
-      const response = await cache.match(key(id, range.start));
+      const response = await cache.match(rangeKey(entry, range));
       if (!response) return fetch(request);
       chunks.push({ ...range, data: new Uint8Array(await response.arrayBuffer()) });
     }
