@@ -229,6 +229,7 @@ footer {
   max-height: 4.6em;
   overflow: hidden;
 }
+#seek-preview[data-frame="false"] { border-radius: 20px; }
 #seek-markers {
   position: absolute;
   bottom: calc(50% + 6px);

@@ -88,7 +88,24 @@ export default async function verifyMobile(page, options) {
     const coldStream = async id => {
       await page.waitForFunction(id => window.bufferEvents.findLast(event => event.id === id)?.state === 'prepared', id);
       await page.request.get(options.baseURL+'/_test/delay/'+id);
-      await page.evaluate(() => caches.delete('stash-tv-media-v1'));
+      await page.evaluate(async () => {
+        Object.defineProperty(document,'hidden',{configurable:true,value:true});
+        document.dispatchEvent(new Event('visibilitychange'));
+        try {
+          await new Promise((resolve,reject) => {
+            const channel=new MessageChannel();
+            const timer=setTimeout(()=>reject(new Error('Cache eviction did not complete')),5000);
+            channel.port1.onmessage=event=>{
+              clearTimeout(timer);channel.port1.close();
+              event.data.error?reject(new Error(event.data.error)):resolve();
+            };
+            navigator.serviceWorker.controller.postMessage({type:'retain',urls:[]},[channel.port2]);
+          });
+        } finally {
+          delete document.hidden;
+          document.dispatchEvent(new Event('visibilitychange'));
+        }
+      });
       if (cdp) await cdp.send('Network.clearBrowserCache');
     };
     if (!cdp) await page.evaluate(() => {
@@ -185,6 +202,36 @@ export default async function verifyMobile(page, options) {
       check(!dragged.paused,'Playing touch seek paused video');
     }
     results.push({name:'repeated touch seek-bar drags in both directions while playing',passed:true});
+    const heldBar=await page.locator('#seek').evaluate(el=>{
+      const b=el.getBoundingClientRect(); return {x:b.x+6,y:b.y+b.height/2,width:b.width-12,max:Number(el.max)};
+    });
+    before=await sample();
+    await touch('down',heldBar.x+heldBar.width*0.35,heldBar.y,'#seek');
+    await touch('move',heldBar.x+heldBar.width*0.5,heldBar.y,'#seek');
+    await page.waitForTimeout(700);
+    after=await sample();
+    check(after.paused && Math.abs(after.time-before.time)<0.2, 'A held scrub kept playing or sought before release');
+    check(await page.locator('#seek-preview').isVisible(),'Held scrub lost its preview feedback');
+    await touch('up',heldBar.x+heldBar.width*0.5,heldBar.y,'#seek');
+    await ready();
+    await page.waitForFunction(()=>!document.querySelector('#video').paused);
+    check(Math.abs((await sample()).time-heldBar.max*0.5)<1.5,'Held scrub did not commit its final target');
+    results.push({name:'held touch scrubs pause transport, commit once, and restore playing intent',passed:true});
+    before=await sample();
+    await touch('down',heldBar.x+heldBar.width*0.35,heldBar.y,'#seek');
+    await touch('move',heldBar.x+heldBar.width*0.8,heldBar.y,'#seek');
+    await touch('cancel',0,0,'#seek');
+    await page.waitForFunction(()=>!document.querySelector('#video').paused);
+    after=await sample();
+    check(after.time>=before.time && after.time<before.time+1.5,'Cancelled playing scrub committed the draft position');
+    results.push({name:'cancelled playing scrubs resume the original position',passed:true});
+    await touch('down',heldBar.x+heldBar.width*0.35,heldBar.y,'#seek');
+    await page.keyboard.press('Space');
+    await touch('up',heldBar.x+heldBar.width*0.35,heldBar.y,'#seek');
+    await ready();
+    check((await sample()).paused,'Releasing a scrub overrode a pause command');
+    await tap(); await page.waitForFunction(()=>!document.querySelector('#video').paused);
+    results.push({name:'pause commands during a held scrub override automatic resumption',passed:true});
     await tap(); await page.waitForTimeout(400);
     for(const fraction of [0.55,0.1,0.45]) {
       const dragged=await dragSeek(fraction);
@@ -353,6 +400,8 @@ export default async function verifyMobile(page, options) {
     await tap();
     await page.waitForFunction(()=>document.querySelector('#video').paused);
     await position(10);
+    const otherScene=findScenes.scenes.find(scene=>scene.id!==before.scene).id;
+    await coldStream(otherScene);
     const clip=await page.locator('#video').evaluate(el=>{
       const r=el.getBoundingClientRect();
       const height=r.width*el.videoHeight/el.videoWidth;
@@ -369,8 +418,6 @@ export default async function verifyMobile(page, options) {
       'Reduced-motion swipe did not follow finger: '+JSON.stringify(reducedDrag));
     const moved=await page.screenshot({clip,path:options.reportDir+'/'+options.browser+'-reduced-motion-drag.png'});
     check(!stationary.equals(moved),'Reduced-motion drag changed styles without moving rendered video pixels');
-    const otherScene=findScenes.scenes.find(scene=>scene.id!==before.scene).id;
-    await coldStream(otherScene);
     await touch('up',195,320);
     check(await page.evaluate(()=>document.querySelector('#player').dataset.swipePhase==='fading' &&
       !document.querySelector('#swipe-outgoing').hidden), 'Reduced-motion handoff discarded the outgoing frame');
