@@ -72,6 +72,10 @@ export function seekPosition(clientX, left, width, duration) {
   return Math.round(fraction * duration * 10) / 10;
 }
 
+export function supportsMultiview(userAgent) {
+  return !/web[O0]S|NetCast/i.test(userAgent);
+}
+
 export function sceneMarkers(markers, duration) {
   if (!Number.isFinite(duration) || duration <= 0) return [];
   return (markers || []).filter(function (marker) {
@@ -284,6 +288,7 @@ async function boot() {
     layout: 1,
   };
   let activity = Promise.resolve();
+  const allowMultiview = supportsMultiview(navigator.userAgent);
   const reducedMotion = function () { return matchMedia("(prefers-reduced-motion: reduce)").matches; };
   const swipe = { phase: "idle", direction: 0, origin: 0, offset: 0, backdropOffset: 0, height: 0, target: null, generation: 0, timer: 0, frame: 0 };
   let pan = 0.5;
@@ -357,8 +362,9 @@ async function boot() {
       byId(id).disabled = blocked;
     });
     const available = new Set(state.queue?.ids).size;
-    byId("layout-two").disabled = blocked || available < 2;
-    byId("layout-four").disabled = blocked || available < 4;
+    byId("layout-two").disabled = blocked || available < 2 || !allowMultiview;
+    byId("layout-four").disabled = blocked || available < 4 || !allowMultiview;
+    for (const id of ["layout-two", "layout-four"]) byId(id).hidden = !allowMultiview;
     if (blocked) multiview?.setPlaying(false);
     byId("delete").disabled = state.layout > 1 || !state.enableDelete || blocked || !state.scene;
     byId("previous").disabled = blocked || !state.queue || state.layout === 1 && state.queue.index === 0;
@@ -1058,6 +1064,11 @@ async function boot() {
 
   async function setLayout(count) {
     if (![1, 2, 4].includes(count) || !state.queue || count > new Set(state.queue.ids).size) return;
+    if (count > 1 && !allowMultiview) {
+      params.delete("layout");
+      history.replaceState(null, "", location.pathname + "?" + params.toString());
+      return;
+    }
     cancelTouch();
     endWheel();
     resetSwipe();
@@ -1544,6 +1555,18 @@ async function boot() {
     positionVideo(contact.pan - dx / contact.overflow);
   }
 
+  const tileFeedback = document.createElement("span");
+  tileFeedback.className = "tile-seek-feedback";
+  tileFeedback.hidden = true;
+  tileFeedback.setAttribute("aria-hidden", "true");
+  function scrubTile(dx, contact) {
+    contact.target = Math.max(0, Math.min(contact.controller.duration() - 0.1,
+      contact.start + dx / Math.max(1, contact.width) * Math.min(120, contact.controller.duration())));
+    if (tileFeedback.parentElement !== contact.controller.node) contact.controller.node.appendChild(tileFeedback);
+    tileFeedback.textContent = timeLabel(contact.target);
+    tileFeedback.hidden = false;
+  }
+
   function cancelTouch() {
     if (touch) {
       clearTimeout(touch.timer);
@@ -1551,13 +1574,14 @@ async function boot() {
       touch = null;
     }
     byId("gesture-feedback").hidden = true;
+    tileFeedback.hidden = true;
     clearSeekFeedback();
     cancelTap();
     returnSwipe();
   }
 
   surface.addEventListener("pointerdown", function (event) {
-    if (event.pointerType !== "touch") return;
+    if (event.pointerType !== "touch" && (state.layout === 1 || event.button !== 0)) return;
     if (!event.isPrimary || touch) return;
     touchClickUntil = performance.now() + 1000;
     if (surface.disabled) {
@@ -1572,12 +1596,15 @@ async function boot() {
     const overflow = player.dataset.fit === "cover" && width && height
       ? Math.max(0, width * Math.max(player.clientWidth / width, player.clientHeight / height) - player.clientWidth)
       : 0;
+    const controller = multiview?.controllerAt(event.clientX, event.clientY);
     touch = {
       id: event.pointerId, x: event.clientX, y: event.clientY,
       phase: "pending", rate: video.playbackRate, timer: 0, time: performance.now(),
       pan: pan, overflow: overflow,
+      controller, start: controller?.position(), width: controller?.node.clientWidth,
+      pointerType: event.pointerType,
     };
-    touch.timer = setTimeout(function () {
+    if (event.pointerType === "touch") touch.timer = setTimeout(function () {
       if (!touch || touch.phase !== "pending" || video.paused) return;
       cancelTap();
       touch.phase = "holding";
@@ -1591,13 +1618,16 @@ async function boot() {
     const dy = event.clientY - touch.y;
     if (touch.phase === "swiping") { moveSwipe(dy); return; }
     if (touch.phase === "panning") { panVideo(dx, touch); return; }
+    if (touch.phase === "scrubbing") { scrubTile(dx, touch); return; }
     if (Math.hypot(dx, dy) <= 12 || touch.phase !== "pending") return;
     clearTimeout(touch.timer);
     cancelTap();
     touch.phase = Math.abs(dy) > Math.abs(dx) * 1.5 ? "swiping"
+      : touch.controller && Math.abs(dx) > Math.abs(dy) * 1.5 ? "scrubbing"
       : touch.overflow > 0 && Math.abs(dx) > Math.abs(dy) * 1.5 ? "panning" : "moving";
     if (touch.phase === "swiping") { startSwipe(); moveSwipe(dy); }
     if (touch.phase === "panning") panVideo(dx, touch);
+    if (touch.phase === "scrubbing") scrubTile(dx, touch);
   });
   surface.addEventListener("pointerup", function (event) {
     if (!touch || touch.id !== event.pointerId) return;
@@ -1613,6 +1643,12 @@ async function boot() {
     }
     const dx = event.clientX - ended.x;
     const dy = event.clientY - ended.y;
+    if (ended.phase === "scrubbing") {
+      scrubTile(dx, ended);
+      tileFeedback.hidden = true;
+      ended.controller.seek(ended.target);
+      return;
+    }
     if (ended.phase === "panning") {
       cancelTap();
       panVideo(dx, ended);
@@ -1628,6 +1664,7 @@ async function boot() {
       else returnSwipe();
       return;
     }
+    if (ended.pointerType !== "touch") { toggle(); return; }
     const bounds = surface.getBoundingClientRect();
     const fraction = (ended.x - bounds.left) / bounds.width;
     const side = fraction < 0.35 ? -1 : fraction > 0.65 ? 1 : 0;
@@ -1658,9 +1695,11 @@ async function boot() {
       if (pending && !pending.started) toggle();
     }, 300) };
   });
-  surface.addEventListener("pointercancel", cancelTouch);
-  surface.addEventListener("lostpointercapture", function () {
-    if (touch) cancelTouch();
+  surface.addEventListener("pointercancel", function (event) {
+    if (event.pointerId === touch?.id) cancelTouch();
+  });
+  surface.addEventListener("lostpointercapture", function (event) {
+    if (event.pointerId === touch?.id) cancelTouch();
   });
   surface.addEventListener("contextmenu", function (event) {
     if (touch || performance.now() < touchClickUntil) event.preventDefault();
@@ -1825,20 +1864,38 @@ async function boot() {
       event.stopImmediatePropagation(); closeMore(); byId("more").focus(); showControls();
     }
   });
+  let gridSeekTimer = 0;
   function closeGridSeek() {
+    clearTimeout(gridSeekTimer);
     byId("grid-seek-panel").hidden = true;
     byId("seek-videos").setAttribute("aria-expanded", "false");
     multiview?.closeSeek();
   }
-  byId("seek-videos").onclick = function () {
+  function openGridSeek(focus = false) {
+    clearTimeout(gridSeekTimer);
+    if (state.layout === 1) return;
+    if (!byId("grid-seek-panel").hidden) {
+      if (focus) multiview?.openSeek(true);
+      return;
+    }
     closeMore(); closeVolume();
     byId("grid-seek-panel").hidden = false;
     byId("seek-videos").setAttribute("aria-expanded", "true");
-    multiview?.openSeek();
+    multiview?.openSeek(focus);
     showControls();
-  };
+  }
+  byId("seek-videos").onclick = function () { openGridSeek(true); };
+  for (const id of ["seek-videos", "grid-seek-panel"]) {
+    byId(id).addEventListener("pointerenter", function (event) {
+      if (event.pointerType === "mouse" && matchMedia("(hover: hover) and (pointer: fine)").matches) openGridSeek();
+    });
+    byId(id).addEventListener("pointerleave", function (event) {
+      if (event.pointerType === "mouse" && !byId("grid-seek-panel").contains(document.activeElement))
+        gridSeekTimer = setTimeout(closeGridSeek, 180);
+    });
+  }
   byId("grid-seek-close").onclick = function () {
-    closeGridSeek(); byId("more").focus(); showControls();
+    closeGridSeek(); byId("seek-videos").focus(); showControls();
   };
   for (const id of ["seek-videos", "grid-seek-close"]) byId(id).addEventListener("keydown", function (event) {
     if (event.key === " " || event.key === "Enter") {
@@ -1851,7 +1908,7 @@ async function boot() {
   });
   document.addEventListener("keydown", function (event) {
     if (event.key === "Escape" && !byId("grid-seek-panel").hidden) {
-      event.stopImmediatePropagation(); closeGridSeek(); byId("more").focus(); showControls();
+      event.stopImmediatePropagation(); closeGridSeek(); byId("seek-videos").focus(); showControls();
     }
   });
   function closeVolume() {

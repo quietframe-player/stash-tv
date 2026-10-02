@@ -133,7 +133,7 @@ export function createMultiview(options) {
     options.seekRows.appendChild(node);
     let pointer = null, pending = null, thumbnailAt = -1;
     const row = {
-      node, range,
+      node, range, controller,
       render() {
         const duration = controller.duration();
         const position = controller.position();
@@ -193,7 +193,7 @@ export function createMultiview(options) {
     return row;
   }
 
-  function openSeek() {
+  function openSeek(focus) {
     function render() {
       seekFrame = 0;
       if (options.seekPanel.hidden) return;
@@ -201,7 +201,7 @@ export function createMultiview(options) {
       seekFrame = requestAnimationFrame(render);
     }
     closeSeek(); render();
-    seekers[0]?.range.focus();
+    if (focus) seekers[0]?.range.focus();
   }
 
   function save(slot, keepalive) {
@@ -450,6 +450,12 @@ export function createMultiview(options) {
   const progress = setInterval(() => slots.forEach(slot => save(slot)), 15000);
   return {
     toggleAll, navigate, random,
+    controllerAt(x, y) {
+      return seekers.map(row => row.controller).find(controller => {
+        const rect = controller.node.getBoundingClientRect();
+        return x >= rect.left && x < rect.right && y >= rect.top && y < rect.bottom;
+      });
+    },
     neighbours: () => gridNeighbours(queue),
     openSeek, closeSeek,
     setCount(count) {
@@ -462,7 +468,7 @@ export function createMultiview(options) {
       if (count > 1) {
         seekers.push(mountSeek(options.primaryController, 0));
         slots.forEach((slot, index) => seekers.push(mountSeek({
-          video: slot.video, position: () => position(slot),
+          node: slot.node, video: slot.video, position: () => position(slot),
           duration: () => Number(slot.scene?.files[0]?.duration) || 0,
           seek: seconds => seekSlot(slot, seconds),
         }, index + 1)));

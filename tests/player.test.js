@@ -13,8 +13,17 @@ import {
   sourceAt,
   truncatedWebmFallback,
   streamChoices,
+  supportsMultiview,
   timeLabel,
 } from "../plugins/stash-tv/web/player.js";
+
+test("LG webOS and NetCast keep one native stream while other browsers allow multiview", () => {
+  expect(supportsMultiview("Mozilla/5.0 (Web0S; Linux/SmartTV) Chrome/108.0.0.0 Large Screen" )).toBe(false);
+  expect(supportsMultiview("Mozilla/5.0 (webOS; Linux) SmartTV" )).toBe(false);
+  expect(supportsMultiview("Mozilla/5.0 (Linux; U; NetCast)" )).toBe(false);
+  expect(supportsMultiview("Mozilla/5.0 (iPhone) Version/26.0 Mobile Safari" )).toBe(true);
+  expect(supportsMultiview("Mozilla/5.0 (Macintosh) Chrome/140.0.0.0" )).toBe(true);
+});
 
 test("markers preserve points, bounded overlaps, tag labels, and fractional boundaries", () => {
   const markers = sceneMarkers([

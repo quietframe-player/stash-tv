@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="referrer" content="same-origin" />
     <title>Stash TV</title>
-    <link rel="stylesheet" href="./style.css?v=0.5.3" />
-    <script type="module" src="./player.js?v=0.5.3"></script>
+    <link rel="stylesheet" href="./style.css?v=0.5.4" />
+    <script type="module" src="./player.js?v=0.5.4"></script>
   </head>
   <body>
     <main id="player" tabindex="-1" aria-label="Stash TV player" data-phase="loading">
@@ -253,6 +253,9 @@
               <path d="M16 21v-3a2 2 0 0 1 2-2h3" />
             </svg>
           </button>
+<button id="seek-videos" type="button" aria-label="Seek videos" title="Seek videos" aria-controls="grid-seek-panel" aria-expanded="false" hidden>
+            <svg class="icon" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 5H3" /><path d="M12 19H3" /><path d="M14 3v4" /><path d="M16 17v4" /><path d="M21 12h-9" /><path d="M21 19h-5" /><path d="M21 5h-7" /><path d="M8 10v4" /><path d="M8 12H3" /></svg>
+          </button>
 <div class="more-controls">
             <button id="more" type="button" aria-label="More controls" title="More controls" aria-expanded="false" aria-controls="more-panel"><svg class="icon icon-ellipsis" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" /><circle cx="5" cy="12" r="1" />
@@ -331,9 +334,6 @@
             <svg class="icon" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M12 3v18" /><path d="M3 12h18" /><rect x="3" y="3" width="18" height="18" rx="2" />
             </svg>
-          </button>
-<button id="seek-videos" type="button" aria-label="Seek videos" title="Seek videos" aria-controls="grid-seek-panel" aria-expanded="false" hidden>
-            <svg class="icon" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 5H3" /><path d="M12 19H3" /><path d="M14 3v4" /><path d="M16 17v4" /><path d="M21 12h-9" /><path d="M21 19h-5" /><path d="M21 5h-7" /><path d="M8 10v4" /><path d="M8 12H3" /></svg>
           </button>
 <button
             id="delete"
