@@ -4,6 +4,14 @@ export default async function verifyGridBuffering(page, options) {
   page.on("pageerror", error => errors.push(error.message));
   await page.addInitScript(() => {
     window.bufferEvents = [];
+    window.gridHandoff = { hold: false, callbacks: [] };
+    const request = HTMLVideoElement.prototype.requestVideoFrameCallback;
+    HTMLVideoElement.prototype.requestVideoFrameCallback = function(callback) {
+      return request.call(this, (now, metadata) => {
+        if (window.gridHandoff.hold) window.gridHandoff.callbacks.push(() => callback(now, metadata));
+        else callback(now, metadata);
+      });
+    };
     document.addEventListener("stash-tv-buffer", event => window.bufferEvents.push({ ...event.detail, wall: performance.now() }), true);
     const choices = [3.5 / 16, 6.5 / 15, 9.5 / 14];
     Math.random = () => choices.shift() ?? 0.5;
@@ -61,8 +69,21 @@ export default async function verifyGridBuffering(page, options) {
       results.push({ name: count + " videos prepare two full groups ahead and one behind serially within 64 MiB", passed: true, current, prepared });
 
       await page.request.get(options.baseURL + "/_test/reset");
+      await page.evaluate(() => { window.gridHandoff.hold = true; });
       await page.keyboard.press("ArrowUp");
+      await page.waitForFunction(count => window.gridHandoff.callbacks.length >= count, count);
+      const covers = await page.evaluate(() => [...document.querySelectorAll("#grid-cover, .extra-view canvas")].map(canvas =>
+        ({ hidden: canvas.hidden, width: canvas.width, height: canvas.height })));
+      check(covers.length === count && covers.every(cover => !cover.hidden && cover.width > 0), "Grid flashed black before decoded frames: " + JSON.stringify(covers));
+      await page.screenshot({ path: options.reportDir + "/" + options.browser + "-grid-handoff-" + count + ".png" });
+      await page.evaluate(() => {
+        window.gridHandoff.hold = false;
+        for (const callback of window.gridHandoff.callbacks.splice(0)) callback();
+      });
       await ready(count);
+      await page.waitForFunction(() => document.getElementById("grid-cover").hidden &&
+        [...document.querySelectorAll(".extra-view canvas")].every(canvas => canvas.hidden));
+      results.push({ name: count + " videos retain visible frames until native presentation completes", passed: true, covers });
       check(JSON.stringify(await snapshot()) === JSON.stringify(next), "Buffered Next changed only part of the grid");
       await page.locator("#toggle").click();
       await page.waitForFunction(() => [...document.querySelectorAll("#views video")].every(video => video.paused));
@@ -76,6 +97,35 @@ export default async function verifyGridBuffering(page, options) {
       results.push({ name: count + " videos reuse prepared ranges for Next and restore the complete previous grid", passed: true, playback });
       await page.screenshot({ path: options.reportDir + "/" + options.browser + "-grid-buffering-" + count + ".png" });
     }
+    await page.evaluate(() => {
+      Object.defineProperty(document, "hidden", { configurable: true, get: () => true });
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    const budget = await page.evaluate(async () => {
+      const urls = Array.from({length: 16}, (_, index) => location.origin + "/scene/" + (index + 1) + "/stream?cache_budget=" + index);
+      const request = message => new Promise((resolve, reject) => {
+        const channel = new MessageChannel();
+        channel.port1.onmessage = event => {
+          channel.port1.close();
+          if (event.data.error) reject(new Error(event.data.error)); else resolve(event.data.result);
+        };
+        navigator.serviceWorker.controller.postMessage(message, [channel.port2, ...(message.prepared?.ranges.map(range => range.data) || [])]);
+      });
+      await request({type: "retain", urls: []});
+      const stored = [];
+      for (const index of [4, 3, 2, 1, 0, 4]) {
+        const bytes = 16 * 1024 * 1024;
+        stored.push(await request({type: "store", urls, prepared: {
+          url: urls[index], bytes, total: bytes, mime: "video/mp4", modified: "", signature: String(index), seconds: 0,
+          ranges: [{start: 0, end: bytes - 1, data: new ArrayBuffer(bytes)}],
+        }}));
+      }
+      return stored;
+    });
+    check(budget.slice(0, 5).every(value => value.stored) && !budget[5].stored, "Cache did not reject the farther item at its byte limit");
+    check(budget.every(value => value.bytes <= 64 * 1024 * 1024) && budget[5].bytes === 64 * 1024 * 1024 &&
+      budget[5].retained.map(item => item.signature).sort().join() === "0,1,2,3", "Cache evicted nearer videos instead of preserving priority: " + JSON.stringify(budget));
+    results.push({name: "full 64 MiB cache evicts farther videos and rejects lower-priority work", passed: true});
     check(errors.length === 0, "Page errors: " + errors.join("; "));
     return { passed: true, browser: options.browser, results, errors };
   } catch (error) {

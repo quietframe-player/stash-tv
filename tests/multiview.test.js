@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { randomScenes, createGridQueue, advanceGrid, randomGrid, singleSoundtrack } from "../plugins/stash-tv/web/multiview.js";
+import { randomScenes, createGridQueue, advanceGrid, randomGrid, gridNeighbours, singleSoundtrack } from "../plugins/stash-tv/web/multiview.js";
 import { frameInsets, frameScale } from "../plugins/stash-tv/web/frame-fill.js";
 
 test("multiview selects distinct random scenes without the primary or other active slots", () => {
@@ -58,6 +58,18 @@ test("grid navigation wraps at both ends and random retries have a distinct boun
   for(let i=0;i<200;i++) queue=advanceGrid(queue,1);
   expect(queue.history.length).toBe(100);
   expect(queue.cursor).toBe(99);
+});
+
+test("grid buffering follows actual history and skips scenes already playing in any pane", () => {
+  const start = createGridQueue(gridIDs, ["1", "3"]);
+  expect(gridNeighbours(start)).toEqual([
+    {id:"2",current:false},{id:"4",current:false},{id:"3",current:true},{id:"5",current:false},{id:"1",current:true},
+  ]);
+  const shuffled = randomGrid(start, () => 0.99);
+  const previous = advanceGrid(shuffled, -1);
+  expect(gridNeighbours(previous).slice(0, 2).map(item => item.id)).toEqual(shuffled.history[shuffled.cursor]);
+  expect(start.history).toEqual([["1", "3"]]);
+  expect(gridNeighbours(null)).toEqual([]);
 });
 
 test("iPhone and iPad use one soundtrack without applying iOS restrictions to Android or desktop", () => {

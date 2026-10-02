@@ -92,6 +92,20 @@ export default async function verifyMultiview(page, options) {
     await page.screenshot({path:options.reportDir+'/'+options.browser+'-multiview-four.png'});
     pass('four scenes fill a gap-free grid and encoded padding is cropped');
     await paused(4);
+    await click('#seek-videos');
+    check(await page.locator('#grid-seek-panel').isVisible() && await page.locator('.grid-seek-range').count()===4,'Missing on-demand seek controls');
+    for (const [index,fraction] of [[0,0.35],[2,0.6],[1,0.2],[2,0.3]]) {
+      const before=await sample();
+      await page.locator('.grid-seek-range').nth(index).evaluate((el,f)=>{el.value=String(Number(el.max)*f);el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));},fraction);
+      await ready(4);
+      const after=await sample();
+      check(after.every((v,i)=>i===index?Math.abs(v.time-v.duration*fraction)<0.3:Math.abs(v.time-before[i].time)<0.05),'Individual seek moved another video: '+JSON.stringify({index,before,after}));
+      check(after.every(v=>v.paused),'Individual seek changed pause intent');
+    }
+    await page.screenshot({path:options.reportDir+'/'+options.browser+'-multiview-seek-panel.png'});
+    await page.keyboard.press('Escape');
+    check(await page.locator('#grid-seek-panel').isHidden(),'Seek panel did not close');
+    pass('on-demand per-video seek controls target one video and preserve the other paused positions');
     await page.locator('#more').focus();
     await position(0.2,4); await delta('d',10,4); await delta('a',-10,4); await delta('ArrowRight',10,4); await delta('ArrowLeft',-10,4);
     pass('D/A and Left/Right seek all videos without focusing a tile');
@@ -167,10 +181,34 @@ export default async function verifyMultiview(page, options) {
       await ready(4); check((await sample()).every(v=>v.paused&&Math.abs(v.time-v.duration*fraction)<0.35),'Repeated touch scrub missed a feed');
     }
     pass('repeated mobile seek drags update all paused videos');
+    const beforePanel=await sample();
+    await page.locator('#more').tap(); await page.locator('#seek-videos').tap();
+    check((await sample()).every((v,i)=>v.paused&&Math.abs(v.time-beforePanel[i].time)<0.05),'Opening seek controls triggered a video or timeline underneath');
+    const single=page.locator('.grid-seek-range').nth(2);
+    for(const fraction of [0.55,0.25,0.45]) {
+      const before=await sample();
+      const b=await single.evaluate(el=>{const r=el.getBoundingClientRect();return{x:r.x+6,y:r.y+r.height/2,width:r.width-12,old:Number(el.value)/Number(el.max)};});
+      if(!cdp) {
+        await single.dispatchEvent('pointerdown',{pointerType:'touch',pointerId:1,isPrimary:true,clientX:b.x+b.width*b.old,clientY:b.y,bubbles:true,cancelable:true});
+        await single.dispatchEvent('pointermove',{pointerType:'touch',pointerId:1,isPrimary:true,clientX:b.x+b.width*fraction,clientY:b.y,bubbles:true,cancelable:true});
+        await single.dispatchEvent('pointerup',{pointerType:'touch',pointerId:1,isPrimary:true,clientX:b.x+b.width*fraction,clientY:b.y,bubbles:true,cancelable:true});
+      } else {await touch('down',b.x+b.width*b.old,b.y);await touch('move',b.x+b.width*fraction,b.y);await touch('up',b.x+b.width*fraction,b.y);}
+      await ready(4);
+      const after=await sample();
+      check(after.every((v,i)=>i===2?Math.abs(v.time-v.duration*fraction)<0.3:Math.abs(v.time-before[i].time)<0.05),'Mobile individual scrub affected another video');
+      check(after.every(v=>v.paused),'Individual mobile scrub changed pause intent: '+JSON.stringify({fraction,before,after}));
+    }
+    await page.screenshot({path:options.reportDir+'/'+options.browser+'-multiview-mobile-seek-panel.png'});
+    await page.locator('#grid-seek-close').tap();
+    check(await page.locator('#grid-seek-panel').isHidden(),'Mobile seek panel did not close');
+    check((await sample()).every(v=>v.paused),'Closing mobile seek controls changed pause intent: '+JSON.stringify(await sample()));
+    pass('repeated mobile per-video scrubs work without tile focus or changing other videos');
+    await position(0.2,4);
     await page.locator('#toggle').tap(); await playing(4); const beforeTap=await sample();
     await touch('down',335); await touch('up',335); await touch('down',335); await touch('up',335);
     await ready(4); await page.waitForTimeout(250);
-    check((await sample()).every((v,i)=>!v.paused&&v.time>beforeTap[i].time+9),'Double tap left a feed behind');
+    const afterTap=await sample();
+    check(afterTap.every((v,i)=>!v.paused&&v.time>beforeTap[i].time+9),'Double tap left a feed behind: '+JSON.stringify({beforeTap,afterTap}));
     pass('side double taps seek every video without changing play intent');
     await touch('down'); await page.waitForFunction(()=>[...document.querySelectorAll('#views video')].every(v=>v.playbackRate===2));
     await touch('up'); await page.waitForFunction(()=>[...document.querySelectorAll('#views video')].every(v=>v.playbackRate===1));

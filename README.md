@@ -45,6 +45,10 @@ One shared control bar handles the whole player; no video needs to be selected o
 Play/pause, volume, keyboard shortcuts, double-tap seeking, swipes, and trackpad scrolling
 apply to every video. Relative seeking moves each video by the same number of seconds.
 The grid seek bar uses percentages to seek each video's own duration.
+For independent seeking, open **More → Seek videos**. A temporary panel shows a
+thumbnail, elapsed time, duration, and seek bar for each video. Scrubbing a row
+changes only that video and preserves playback intent. Close the panel to return
+to the unobstructed grid. No tile needs to be focused.
 Previous, Random, Next, and the two/four-video layouts are inside More.
 Navigation keeps a history of complete grids, so Previous restores all feeds together.
 Desktop soundtracks share one mute and volume setting. On iPhone and iPad, only the first
@@ -52,7 +56,9 @@ video supplies sound so the other videos can keep playing; the same button mutes
 Each video saves its playback position in Stash. Permanent deletion is available in single view.
 
 Extra streams load only while multiview is selected and unload when you return to single
-view. Neighbor preparation pauses during multiview to give the playing videos bandwidth.
+view. The player prepares two groups ahead and one behind in multiview, with one
+background media request at a time. Preparation yields whenever a playing video
+loads or seeks.
 Simultaneous playback depends on your device's video decoders and the available network
 and Stash streaming capacity.
 The fullscreen button expands the whole player on supported browsers. iPhone uses native
@@ -100,13 +106,16 @@ trackpad scrolling moves the same views directly. Crossing the navigation thresh
 advances one video; the remaining momentum stays in that gesture. Short or reversed
 drags return to the current video. Scrolling over controls does not change videos.
 
-The player prepares two videos ahead and one behind, in that order. For original MP4
+The player prepares two videos ahead and one behind in single view, or two complete
+groups ahead and one behind in multiview, in that order. For original MP4
 streams, it reads the index and buffers up to five seconds around the saved position,
 starting at the preceding keyframe. Preparation is serial, cancels obsolete work,
 and yields while the current video loads or seeks. Hidden pages stop preparation.
 A local service worker feeds the prepared ranges to the existing native video element.
-The cache holds at most four items, 16 MiB each and 64 MiB total, expires after ten
-minutes, and is cleared when the page closes. Stored cache keys hash the stream URL;
+The cache holds at most four items in single view or sixteen in multiview, with a
+16 MiB limit per item and a shared 64 MiB total limit. When it fills, the nearest
+upcoming videos take priority. Entries expire after ten minutes and are cleared
+when the page closes. Stored cache keys hash the stream URL;
 the cache index does not persist its authorization parameters.
 MP4 headers can span range requests or follow a large padding box. Their read budget
 is 8 MiB within the same 16 MiB item limit. A leading empty edit uses the movie's
@@ -115,7 +124,9 @@ timing scale when aligning the checkpoint frame.
 A worker briefly decodes the exact checkpoint frame when WebCodecs supports the codec,
 then releases its decoder. Returning to a watched scene can reuse its last decoded
 frame at that same checkpoint. This frame stays visible until playback is ready at
-the saved position. If an exact frame is unavailable, the loading view stays blank.
+the saved position. Grid panes retain their previous decoded frame when a prepared
+frame is unavailable, then reveal the new video when it presents a frame. A cold
+start with no decoded frame stays blank until the browser can decode the video.
 Other containers, oversized indexes, unsupported codecs, and browsers without service
 workers keep normal playback. Preparation never starts neighboring transcodes or
 changes video quality. Buffering requires HTTPS or localhost. Single view uses one

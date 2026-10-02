@@ -37,6 +37,21 @@ export function randomGrid(queue, random = Math.random) {
   return appendGrid(queue, next);
 }
 
+export function gridNeighbours(queue) {
+  if (!queue) return [];
+  const current = queue.history[queue.cursor];
+  const next = advanceGrid(queue, 1);
+  const second = advanceGrid(next, 1);
+  const previous = advanceGrid(queue, -1);
+  const seen = new Set();
+  return [next.history[next.cursor], second.history[second.cursor], previous.history[previous.cursor], current]
+    .flatMap(group => group.filter(id => {
+      if (seen.has(id)) return false;
+      seen.add(id);
+      return true;
+    }).map(id => ({ id, current: current.includes(id) })));
+}
+
 export function singleSoundtrack(userAgent, platform, touchPoints) {
   return /iPhone|iPad|iPod/.test(userAgent) || platform === "MacIntel" && touchPoints > 1;
 }
@@ -47,6 +62,8 @@ export function createMultiview(options) {
   let suspended = false;
   let primaryFill = null;
   let queue = null;
+  let seekFrame = 0;
+  const seekers = [];
   const oneSoundtrack = singleSoundtrack(navigator.userAgent, navigator.platform, navigator.maxTouchPoints);
   let audio = { volume: options.primaryController.video.volume, muted: options.primaryController.video.muted };
   let rate = options.primaryController.video.playbackRate;
@@ -59,9 +76,11 @@ export function createMultiview(options) {
     groupPlaying([options.primaryController.video, ...slots.map(slot => slot.video)].every(video => video.paused));
   }
   function open(snapshot) {
+    options.closeSeekPanel();
     defaultPlaying = true;
     slots.forEach((slot, index) => { slot.wantsPlay = true; load(slot, snapshot[index + 1]); });
     options.openPrimary(snapshot[0]);
+    options.neighboursChanged();
   }
   function navigate(direction) {
     queue = advanceGrid(queue, direction);
@@ -87,6 +106,102 @@ export function createMultiview(options) {
     if (stream.offset && !buffered) { save(slot); source(slot, slot.index, target); }
     else if (slot.video.readyState < 1) slot.resume = target;
     else slot.video.currentTime = relative;
+  }
+
+  function closeSeek() {
+    cancelAnimationFrame(seekFrame); seekFrame = 0;
+    seekers.forEach(row => row.cancel());
+  }
+
+  function mountSeek(controller, index) {
+    const node = document.createElement("div");
+    node.className = "grid-seek-row";
+    const frame = document.createElement("canvas");
+    frame.width = 96; frame.height = 54;
+    frame.setAttribute("aria-hidden", "true");
+    const details = document.createElement("div");
+    const label = document.createElement("div");
+    label.className = "grid-seek-label";
+    const name = document.createElement("span"); name.textContent = "Video " + (index + 1);
+    const time = document.createElement("span");
+    label.append(name, time);
+    const range = document.createElement("input");
+    range.type = "range"; range.min = "0"; range.max = "1"; range.step = "0.1"; range.value = "0";
+    range.className = "grid-seek-range";
+    range.setAttribute("aria-label", "Seek video " + (index + 1));
+    details.append(label, range); node.append(frame, details);
+    options.seekRows.appendChild(node);
+    let pointer = null, pending = null, thumbnailAt = -1;
+    const row = {
+      node, range,
+      render() {
+        const duration = controller.duration();
+        const position = controller.position();
+        range.disabled = !duration;
+        range.max = String(duration || 1);
+        if (pending !== null && !controller.video.seeking && Math.abs(position - pending) < 0.3) pending = null;
+        if (pointer === null) range.value = String(pending ?? position);
+        const seconds = Number(range.value);
+        range.style.setProperty("--progress", 100 * seconds / (duration || 1) + "%");
+        const text = options.timeLabel(seconds) + " / " + options.timeLabel(duration);
+        if (time.textContent !== text) time.textContent = text;
+        range.setAttribute("aria-valuetext", text);
+        const at = Math.floor(position);
+        const video = controller.video;
+        if (at !== thumbnailAt && video.readyState >= 2 && !video.seeking && video.videoWidth) {
+          frame.getContext("2d").drawImage(video, 0, 0, 96, 54);
+          thumbnailAt = at;
+        }
+      },
+      cancel() {
+        const id = pointer; pointer = null; pending = null;
+        if (id !== null && range.hasPointerCapture(id)) range.releasePointerCapture(id);
+      },
+    };
+    function move(event) {
+      const bounds = range.getBoundingClientRect();
+      const fraction = Math.max(0, Math.min(1, (event.clientX - bounds.left - 6) / Math.max(1, bounds.width - 12)));
+      range.value = String(Math.round(fraction * Number(range.max) * 10) / 10);
+      row.render();
+    }
+    function commit() {
+      pending = Number(range.value);
+      controller.seek(pending);
+      row.render();
+    }
+    range.addEventListener("pointerdown", event => {
+      if (!event.isPrimary || range.disabled || event.pointerType === "mouse" && event.button !== 0) return;
+      event.preventDefault(); row.cancel(); pointer = event.pointerId;
+      range.setPointerCapture(pointer); move(event); options.showControls();
+    });
+    range.addEventListener("pointermove", event => { if (event.pointerId === pointer) move(event); });
+    range.addEventListener("pointerup", event => {
+      if (event.pointerId !== pointer) return;
+      event.preventDefault(); move(event);
+      const id = pointer; pointer = null;
+      commit();
+      if (range.hasPointerCapture(id)) range.releasePointerCapture(id);
+    });
+    for (const type of ["pointercancel", "lostpointercapture"]) range.addEventListener(type, event => {
+      if (event.pointerId === pointer) { row.cancel(); row.render(); }
+    });
+    range.oninput = () => { pending = Number(range.value); row.render(); options.showControls(); };
+    range.onchange = commit;
+    range.addEventListener("keydown", event => {
+      if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown"].includes(event.key)) event.stopPropagation();
+    });
+    return row;
+  }
+
+  function openSeek() {
+    function render() {
+      seekFrame = 0;
+      if (options.seekPanel.hidden) return;
+      seekers.forEach(row => row.render());
+      seekFrame = requestAnimationFrame(render);
+    }
+    closeSeek(); render();
+    seekers[0]?.range.focus();
   }
 
   function save(slot, keepalive) {
@@ -203,6 +318,9 @@ export function createMultiview(options) {
       if (generation !== slot.generation) return;
       if (!scene.sources.length) throw new Error("No playable stream");
       slot.scene = scene;
+      const frame = await options.getStill(id);
+      if (generation !== slot.generation) return;
+      if (frame) { options.drawStill(slot.cover, frame); slot.cover.hidden = false; }
       source(slot, 0, options.checkpoint(scene));
     } catch {
       if (generation === slot.generation) fail(slot, "Retry video");
@@ -324,14 +442,27 @@ export function createMultiview(options) {
   const progress = setInterval(() => slots.forEach(slot => save(slot)), 15000);
   return {
     toggleAll, navigate, random,
+    neighbours: () => gridNeighbours(queue),
+    openSeek, closeSeek,
     setCount(count) {
+      closeSeek();
+      options.seekRows.textContent = ""; seekers.length = 0;
       if (count > 1 && !primaryFill) primaryFill = mountFrameFill(options.primaryController.node, options.primaryController.video);
       if (count === 1 && primaryFill) { primaryFill.dispose(); primaryFill = null; }
       while (slots.length > count - 1) unmount(slots.pop());
       while (slots.length < count - 1) { const slot = mount(); replacement(slot); }
+      if (count > 1) {
+        seekers.push(mountSeek(options.primaryController, 0));
+        slots.forEach((slot, index) => seekers.push(mountSeek({
+          video: slot.video, position: () => position(slot),
+          duration: () => Number(slot.scene?.files[0]?.duration) || 0,
+          seek: seconds => seekSlot(slot, seconds),
+        }, index + 1)));
+      }
       queue = count > 1 ? createGridQueue(options.ids(), [options.primary(), ...slots.map(slot => slot.id)]) : null;
       primaryFill?.refresh(); slots.forEach(slot => slot.fill.refresh());
       options.changed();
+      options.neighboursChanged();
     },
     setPlaying,
     seekBy(delta) { slots.forEach(slot => seekSlot(slot, position(slot) + delta)); },
@@ -348,6 +479,7 @@ export function createMultiview(options) {
     },
     primaryChanged(id) { slots.filter(slot => slot.id === id).forEach(replacement); },
     dispose(keepalive) {
+      closeSeek(); options.seekRows.textContent = ""; seekers.length = 0;
       clearInterval(progress);
       primaryFill?.dispose(); primaryFill = null;
       while (slots.length) unmount(slots.pop(), keepalive);

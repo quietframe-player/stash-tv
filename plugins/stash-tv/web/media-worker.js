@@ -18,7 +18,8 @@ async function remove(cache, entry) {
   await Promise.all([cache.delete(entry.key), ...entry.ranges.map(range => cache.delete(key(entry.id, range.start)))]);
 }
 async function prune(cache, wanted, limit = LIMIT, slots = 4) {
-  const list = (await entries(cache)).sort((a, b) => b.stored - a.stored);
+  const list = (await entries(cache)).sort((a, b) => wanted
+    ? wanted.indexOf(a.id) - wanted.indexOf(b.id) : b.stored - a.stored);
   let bytes = 0, count = 0;
   for (const entry of list) {
     if (Date.now() - entry.stored > TTL || (wanted && !wanted.includes(entry.id)) ||
@@ -31,7 +32,8 @@ async function prune(cache, wanted, limit = LIMIT, slots = 4) {
     for (const range of entry.ranges) keep.add(key(entry.id, range.start));
   }
   for (const request of await cache.keys()) if (!keep.has(request.url)) await cache.delete(request);
-  return { bytes, count };
+  const retained = (await entries(cache)).map(entry => ({ signature: entry.signature, seconds: entry.seconds }));
+  return { bytes, count, retained };
 }
 self.addEventListener("install", event => event.waitUntil(self.skipWaiting()));
 self.addEventListener("activate", event => event.waitUntil(self.clients.claim()));
@@ -41,28 +43,35 @@ self.addEventListener("message", event => {
   writes = writes.catch(() => {}).then(async () => {
     const cache = await caches.open(CACHE);
     const input = event.data;
-    if (input.type === "retain") return prune(cache, await Promise.all(input.urls.map(hash)));
+    const wanted = await Promise.all((input.urls || []).slice(0, 16).map(hash));
+    const slots = Math.max(4, wanted.length);
+    if (input.type === "retain") return prune(cache, wanted, LIMIT, slots);
     if (input.type === "store") {
       const value = input.prepared;
       const url = new URL(value.url);
       if (url.origin !== self.location.origin || !/\/scene\/\d+\/stream$/.test(url.pathname) ||
           value.bytes > 16 * 1024 * 1024) throw new Error("Invalid prepared stream");
       const id = await hash(url.href);
+      const priority = wanted.indexOf(id);
+      const higher = (await entries(cache)).filter(entry => entry.id !== id &&
+        Date.now() - entry.stored <= TTL && wanted.includes(entry.id) && wanted.indexOf(entry.id) < priority);
+      if (priority < 0 || higher.length >= slots || higher.reduce((sum, entry) => sum + entry.bytes, 0) + value.bytes > LIMIT)
+        return { ...await prune(cache, wanted, LIMIT, slots), stored: false };
       const old = await cache.match(key(id));
       if (old) await remove(cache, { ...(await old.json()), key: key(id) });
-      await prune(cache, null, LIMIT - value.bytes, 3);
+      await prune(cache, wanted, LIMIT - value.bytes, slots - 1);
       const ranges = value.ranges.map(range => ({ start: range.start, end: range.end }));
       try {
         for (const range of value.ranges) await cache.put(key(id, range.start), new Response(range.data));
         await cache.put(key(id), new Response(JSON.stringify({ id, total: value.total, mime: value.mime,
-          modified: value.modified, ranges, bytes: value.bytes, signature: value.signature, stored: Date.now() }),
+          modified: value.modified, ranges, bytes: value.bytes, signature: value.signature, seconds: value.seconds, stored: Date.now() }),
         { headers: { "Content-Type": "application/json" } }));
       } catch (error) {
         await remove(cache, { id, key: key(id), ranges });
         throw error;
       }
     }
-    return prune(cache);
+    return { ...await prune(cache, wanted, LIMIT, slots), stored: true };
   });
   event.waitUntil(writes.then(result => port.postMessage({ result }), error => port.postMessage({ error: error.message })));
 });
