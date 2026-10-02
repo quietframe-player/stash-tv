@@ -10,7 +10,7 @@ export default async function verifyMobile(page, options) {
   await page.addInitScript(() => {
     window.mobileEvents = [];
     window.bufferEvents = [];
-    document.addEventListener('stash-tv-buffer', event => window.bufferEvents.push(event.detail), true);
+    document.addEventListener('stash-tv-buffer', event => window.bufferEvents.push({ ...event.detail, wall:performance.now() }), true);
     const record = (type, extra = {}) => {
       const video = document.querySelector('#video');
       window.mobileEvents.push({ type, wall:performance.now(), time:video?.currentTime,
@@ -85,6 +85,12 @@ export default async function verifyMobile(page, options) {
     };
     const cdp = options.browser === 'chrome' ? await context.newCDPSession(page) : null;
     if (cdp) await cdp.send('Network.setCacheDisabled', {cacheDisabled:true});
+    const coldStream = async id => {
+      await page.waitForFunction(id => window.bufferEvents.findLast(event => event.id === id)?.state === 'prepared', id);
+      await page.request.get(options.baseURL+'/_test/delay/'+id);
+      await page.evaluate(() => caches.delete('stash-tv-media-v1'));
+      if (cdp) await cdp.send('Network.clearBrowserCache');
+    };
     if (!cdp) await page.evaluate(() => {
       // WebKit's automation interface exposes taps but no held touch sequence.
       window.originalCapture = Element.prototype.setPointerCapture;
@@ -250,8 +256,7 @@ export default async function verifyMobile(page, options) {
     results.push({name:'hold restores the previous speed without changing the media source',passed:true});
     before = await sample();
     const nextScene=findScenes.scenes.find(scene=>scene.id!==before.scene).id;
-    await page.evaluate(() => caches.delete('stash-tv-media-v1'));
-    await page.request.get(options.baseURL+'/_test/delay/'+nextScene);
+    await coldStream(nextScene);
     await touch('down',195,450); await touch('move',195,320);
     const drag=await page.evaluate(() => ({phase:document.querySelector('#player').dataset.swipePhase,
       offset:new DOMMatrix(getComputedStyle(document.querySelector('#video')).transform).m42,
@@ -305,8 +310,7 @@ export default async function verifyMobile(page, options) {
     await settled();
     check(await page.locator('video').count()===1 && await page.locator('#swipe-outgoing').isHidden(),'Swipe left a second decoder or stale frame');
     results.push({name:'finger-following swipe and decoded-frame transition in both directions',passed:true});
-    await page.evaluate(() => caches.delete('stash-tv-media-v1'));
-    await page.request.get(options.baseURL+'/_test/delay/'+nextScene);
+    await coldStream(nextScene);
     await touch('down',195,450); await touch('move',195,320); await touch('up',195,320);
     await page.waitForFunction(()=>document.querySelector('#player').dataset.swipePhase==='loading' &&
       document.querySelector('#swipe-incoming').width>0);
@@ -366,8 +370,7 @@ export default async function verifyMobile(page, options) {
     const moved=await page.screenshot({clip,path:options.reportDir+'/'+options.browser+'-reduced-motion-drag.png'});
     check(!stationary.equals(moved),'Reduced-motion drag changed styles without moving rendered video pixels');
     const otherScene=findScenes.scenes.find(scene=>scene.id!==before.scene).id;
-    await page.evaluate(() => caches.delete('stash-tv-media-v1'));
-    await page.request.get(options.baseURL+'/_test/delay/'+otherScene);
+    await coldStream(otherScene);
     await touch('up',195,320);
     check(await page.evaluate(()=>document.querySelector('#player').dataset.swipePhase==='fading' &&
       !document.querySelector('#swipe-outgoing').hidden), 'Reduced-motion handoff discarded the outgoing frame');
