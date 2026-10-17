@@ -352,7 +352,7 @@ async function boot() {
     if (value === "error") resetSwipe();
     state.phase = value;
     player.dataset.phase = value;
-    byId("quality-controls").hidden = value !== "error";
+    byId("quality-controls").hidden = value !== "error" || embedded;
     byId("status").hidden = !["error", "delete-unknown", "empty"].includes(value);
     if (message) byId("status").textContent = message;
     const label = value === "error" ? "Retry" : value === "playing" ? "Pause" : "Play";
@@ -912,7 +912,8 @@ async function boot() {
     const generation = state.generation;
     state.sourceTimer = setTimeout(function () {
       if (generation === state.generation && state.phase === "loading") {
-        phase("error", "Video is taking too long. Choose another quality or retry.");
+        phase("error", embedded ? "Original video is taking too long. Retry playback." :
+          "Video is taking too long. Choose another quality or retry.");
         showControls();
       }
     }, 20000);
@@ -2110,7 +2111,8 @@ async function boot() {
       setSource(state.sourceIndex + 1, position);
     } else {
       clearTimeout(state.sourceTimer);
-      phase("error", "Video could not load. Retry or choose another quality.");
+      phase("error", embedded ? "Original video could not play. Retry or open the standalone player." :
+        "Video could not load. Retry or choose another quality.");
       showControls();
     }
   });
