@@ -96,6 +96,10 @@ appears while images load or when a sprite is unavailable.
 Generate sprites in Stash if seek previews are missing.
 
 The player prefers the original stream and can fall back to compatible Stash streams.
+When embedded in another application, it uses only the original stream and skips
+neighbour preparation so background downloads do not compete with current playback.
+Playback controls, seeking, and saved positions remain available. An unsupported
+original format reports a playback error instead of selecting a lower quality.
 Codec support depends on the browser and device. If a WebM transcode reports a
 premature end, the player recovers through an available MP4 stream at the same resolution. When playback fails, a quality selector appears.
 Resume positions follow Stash's **Always start from beginning** preference.

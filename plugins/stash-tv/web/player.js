@@ -236,6 +236,7 @@ async function boot() {
   const player = byId("player");
   const video = byId("video");
   const params = new URLSearchParams(location.search);
+  const embedded = window.self !== window.top;
   const basePath = location.pathname.split("/plugin/stash-tv/assets/")[0] + "/";
   const baseURL = new URL(basePath, location.origin);
   const debug = params.get("debug") === "1";
@@ -775,6 +776,7 @@ async function boot() {
     const sources = streamChoices(scene, location.origin, basePath).filter(function (source, index) {
       return index === 0 || !source.mime || !!video.canPlayType(source.mime);
     }).map(source => versionOriginal(scene, source));
+    if (embedded) return sources.slice(0, 1);
     const webkit = /AppleWebKit/.test(navigator.userAgent) && !/Chrome|Chromium|Edg|OPR/.test(navigator.userAgent);
     const original = sources[0];
     if (!webkit || video.canPlayType("video/x-matroska") || scene.files[0]?.format !== "matroska" ||
@@ -843,6 +845,7 @@ async function boot() {
   }
 
   async function warmNeighbours() {
+    if (embedded) return;
     const plan = ++bufferPlan;
     const generation = state.generation;
     const queue = state.queue;

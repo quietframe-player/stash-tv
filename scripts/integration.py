@@ -22,7 +22,7 @@ ROOT = Path(__file__).resolve().parents[1]
 VIDEO_URL = "https://media.w3.org/2010/05/sintel/trailer.mp4"
 VIDEO_SHA256 = "b670602fa00934ca27c4351bb0efe7ea7a07fae57284e44226025eeed7c51254"
 IMAGE = "stashapp/stash:v0.31.1@sha256:df744af5a0c976e2ec671052ecc1f8a9aa757fa12b8f9930b59910b7295f0da6"
-CLI = ["npx", "--yes", "--package", "@playwright/cli@0.1.21", "playwright-cli"]
+CLI = ["npx", "--yes", "--package", "@playwright/cli@0.1.22", "playwright-cli"]
 
 
 def command(arguments, **options):

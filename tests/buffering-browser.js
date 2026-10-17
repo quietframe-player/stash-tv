@@ -32,6 +32,44 @@ export default async function verifyBuffering(page, options) {
     const ids = findScenes.scenes.map(scene => scene.id);
     check(ids.length === 5 && findScenes.scenes.every(scene => scene.files[0].path.startsWith("/media/sintel")), "Expected five isolated Sintel fixtures");
     for (const id of ids) await api("mutation($id:ID!){sceneSaveActivity(id:$id,resume_time:20,playDuration:0)}", { id });
+    const embeddedRequests = [];
+    const recordEmbedded = request => {
+      const url = new URL(request.url());
+      if (/\/scene\/[^/]+\/stream/.test(url.pathname)) embeddedRequests.push(url.pathname);
+    };
+    page.on("request", recordEmbedded);
+    const keepCheckpoint = route => {
+      const query = route.request().postDataJSON()?.query || "";
+      const field = query.includes("sceneSaveActivity") ? "sceneSaveActivity" :
+        query.includes("sceneIncrementPlayCount") ? "sceneIncrementPlayCount" : null;
+      return field ? route.fulfill({ json: { data: { [field]: true } } }) : route.continue();
+    };
+    await page.route("**/graphql", keepCheckpoint);
+    const embeddedURL = options.baseURL + "/plugin/stash-tv/assets/index.html?autoplay=false&seed=17&scene=" + ids[1];
+    await page.route("**/_test/embedded-player", route => route.fulfill({ contentType: "text/html",
+      body: '<iframe style="width:100vw;height:100vh;border:0" allow="autoplay" src="' + embeddedURL + '"></iframe>' }));
+    await page.goto(options.baseURL + "/_test/embedded-player");
+    const iframe = await page.locator("iframe").elementHandle();
+    const embedded = await iframe.contentFrame();
+    await embedded.waitForFunction(() => document.querySelector("#player").dataset.videoReady === "true");
+    await embedded.locator("#surface").click();
+    await embedded.waitForFunction(() => !document.querySelector("#video").paused);
+    await page.waitForTimeout(4000);
+    const embeddedState = await embedded.evaluate(() => ({
+      time: document.getElementById("video").currentTime,
+      source: new URL(document.getElementById("video").currentSrc).pathname,
+      options: document.getElementById("source").options.length,
+      preparations: window.bufferEvents.length,
+    }));
+    check(embeddedState.time > 22 && embeddedState.source.endsWith("/stream") && embeddedState.options === 1,
+      "Embedded playback changed original quality or stopped: " + JSON.stringify(embeddedState));
+    check(embeddedRequests.length > 0 && embeddedRequests.every(path => path === "/scene/" + ids[1] + "/stream") &&
+      embeddedState.preparations === 0, "Embedded playback downloaded neighbouring videos: " + JSON.stringify(embeddedRequests));
+    page.off("request", recordEmbedded);
+    await page.goto("about:blank");
+    await page.unroute("**/graphql", keepCheckpoint);
+    await page.unroute("**/_test/embedded-player");
+    results.push({ name: "embedded playback preserves the original stream and does not prepare neighbours", passed: true, ...embeddedState });
     await page.goto(options.baseURL + "/plugin/stash-tv/assets/index.html?autoplay=false&debug=1&seed=17&scene=" + ids[1]);
     await ready();
     await page.waitForFunction(ids => ids.every(id => window.bufferEvents.some(event => event.state === "prepared" && event.id === id)), [ids[2], ids[3], ids[0]]);
