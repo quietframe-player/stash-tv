@@ -204,11 +204,12 @@ changes that global setting. Only enable this feature on a trusted device.
 
 ## Develop and test
 
-The runtime is plain HTML, CSS, and JavaScript. `launcher.js` adds the navigation link through
-Stash's PluginApi. Assets are served by Stash itself. No analytics or third-party runtime requests
-are included.
+The runtime is plain HTML, CSS, and JavaScript. Video.js 10 handles playback controls for the
+main video and each multiview tile. Stash serves the player and its bundled dependencies.
+`launcher.js` adds the navigation link through Stash's PluginApi.
 
 ```sh
+bun install --frozen-lockfile
 bun test
 python3 scripts/build.py
 python3 scripts/integration.py --apply
@@ -216,7 +217,7 @@ python3 scripts/integration.py --apply --suite plugin
 python3 scripts/integration.py --apply --suite mobile
 ```
 
-The builder uses Python's standard library. It creates `dist/stash-tv.zip` and `dist/index.yml` with
+The builder uses Bun to bundle Video.js and creates `dist/stash-tv.zip` and `dist/index.yml` with
 a SHA-256 checksum. Keep the version in `package.json` and `plugins/stash-tv/stash-tv.yml` in sync.
 GitHub Actions publishes this directory to GitHub Pages after the checks pass on `main`.
 

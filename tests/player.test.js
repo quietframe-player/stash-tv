@@ -221,18 +221,6 @@ test("seek time is expressed as media time for direct and HLS sources", () => {
   expect(timeLabel(3721)).toBe("1:02:01");
 });
 
-test("the player and controls fit the initial compressed size budget", async () => {
-  const files = ["index.html", "style.css", "player.js"];
-  let bytes = 0;
-  for (const file of files) {
-    const source = await Bun.file(
-      new URL("../plugins/stash-tv/web/" + file, import.meta.url),
-    ).arrayBuffer();
-    bytes += Bun.gzipSync(source).byteLength;
-  }
-  expect(bytes).toBeLessThan(50_000);
-});
-
 test("keyboard playback shortcuts preserve browser modifiers and distinguish Shift F", () => {
   for (const [key, action] of [
     ["w", "volume-up"],

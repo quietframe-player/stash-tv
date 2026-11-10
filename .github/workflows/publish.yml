@@ -17,6 +17,7 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: latest
+      - run: bun install --frozen-lockfile
       - run: bun test
       - run: python3 scripts/build.py
       - run: python3 -B -m unittest discover -s tests -p 'test_*.py'
@@ -32,6 +33,10 @@ jobs:
         browser: [chrome, webkit]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
       - run: npx --yes --package @playwright/cli@0.1.22 playwright-cli install-browser ${{ matrix.browser }} --with-deps
       - run: python3 -B scripts/integration.py --apply --suite mobile --browser ${{ matrix.browser }}
       - run: python3 -B scripts/integration.py --apply --suite buffering --browser ${{ matrix.browser }}

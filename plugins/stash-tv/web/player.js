@@ -1,3 +1,5 @@
+import { attachPlayback } from "./videojs.js";
+
 export function makeQueue(scenes, requestedId) {
   const ids = Array.from(
     new Set(
@@ -235,6 +237,7 @@ async function boot() {
   };
   const player = byId("player");
   const video = byId("video");
+  const playback = attachPlayback(video);
   const params = new URLSearchParams(location.search);
   const embedded = window.self !== window.top;
   const basePath = location.pathname.split("/plugin/stash-tv/assets/")[0] + "/";
@@ -537,31 +540,30 @@ async function boot() {
     return state.layout > 1 ? Math.round(100 * seconds / (Number(byId("seek").max) || 1)) + "%" : timeLabel(seconds);
   }
 
+  function updateTimeline() {
+    const seek = byId("seek");
+    const seconds = state.seekTarget ?? (scrub.pointerId === null ? currentTime() : Number(seek.value));
+    const label = timelineLabel(seconds);
+    if (byId("elapsed").textContent !== label) byId("elapsed").textContent = label;
+    if (scrub.pointerId === null) seek.value = String(seconds);
+    paintSeek();
+  }
+
   function scheduleTimeline() {
     if (state.timelineFrame) return;
-    state.timelineFrame = requestAnimationFrame(function update() {
+    state.timelineFrame = requestAnimationFrame(function () {
       state.timelineFrame = 0;
-      const seconds =
-        state.seekTarget !== null
-          ? state.seekTarget
-          : scrub.pointerId !== null
-            ? Number(byId("seek").value)
-            : currentTime();
-      const label = timelineLabel(seconds);
-      if (byId("elapsed").textContent !== label) byId("elapsed").textContent = label;
-      if (scrub.pointerId === null) byId("seek").value = String(seconds);
-      paintSeek();
-      if (
-        state.phase === "playing" &&
-        !video.paused &&
-        !state.buffering &&
-        scrub.pointerId === null &&
-        state.seekTarget === null &&
-        !player.classList.contains("idle")
-      )
-        state.timelineFrame = requestAnimationFrame(update);
+      updateTimeline();
     });
   }
+
+  let timelineTime = playback.currentTime;
+  playback.subscribe(function () {
+    if (timelineTime === playback.currentTime) return;
+    timelineTime = playback.currentTime;
+    if (state.phase === "playing" && !state.buffering && scrub.pointerId === null &&
+        state.seekTarget === null && !player.classList.contains("idle")) updateTimeline();
+  });
 
   function hidePreview() {
     clearTimeout(scrub.hideTimer);
@@ -873,10 +875,10 @@ async function boot() {
 
   function play() {
     state.wantsPlay = true;
-    if (!state.scene || !state.sourceURL || state.resume || scrub.pointerId !== null)
+    if (!state.scene || !state.sourceURL || state.resume || scrub.pointerId !== null || !video.paused)
       return;
     const generation = state.generation;
-    video.play().catch(function (error) {
+    playback.play().catch(function (error) {
       if (generation !== state.generation || error.name === "AbortError") return;
       if (error.name === "NotAllowedError") {
         state.wantsPlay = false;
@@ -905,7 +907,7 @@ async function boot() {
     byId("source").value = String(index);
     byId("status").textContent = source.label;
     phase("loading", "Loading video...");
-    video.pause();
+    playback.pause();
     video.src = state.sourceURL;
     video.load();
     watchFrame();
@@ -940,7 +942,7 @@ async function boot() {
     resetPreview();
     state.startedAt = performance.now();
     clearTimeout(state.sourceTimer);
-    video.pause();
+    playback.pause();
     state.scene = null;
     state.markers = [];
     renderMarkers();
@@ -1014,16 +1016,18 @@ async function boot() {
         requestedSeed <= 2147483647
           ? requestedSeed
           : values[0] % 2147483647;
-      const result = await api(
+      cache.clear();
+      stills.clear();
+      const queue = api(
         "query TVQueue($filter:FindFilterType!){findScenes(filter:$filter){scenes{id}} configuration{ui plugins(include:[\"stash-tv\"])}}",
         { filter: { sort: "random_" + state.seed, direction: "DESC", per_page: -1 } },
       );
+      if (/^[1-9][0-9]*$/.test(requestedId)) getScene(requestedId).catch(() => {});
+      const result = await queue;
       state.queue = makeQueue(result.findScenes.scenes, requestedId);
       state.fromBeginning = !!(result.configuration.ui || {}).alwaysStartFromBeginning;
       state.enableDelete = (result.configuration.plugins["stash-tv"] || {}).enableDelete === true;
       byId("delete").hidden = !state.enableDelete;
-      cache.clear();
-      stills.clear();
       await loadScene();
       if ([2, 4].includes(Number(params.get("layout")))) setLayout(Number(params.get("layout")));
     } catch (error) {
@@ -1078,7 +1082,7 @@ async function boot() {
     } else {
       state.wantsPlay = false;
       multiview?.setPlaying(false);
-      video.pause();
+      playback.pause();
     }
     byId("surface").focus();
     showControls();
@@ -1125,6 +1129,7 @@ async function boot() {
       url.search = new URL(import.meta.url).search;
       multiviewSetup = import(url.href).then(module => {
         multiview = module.createMultiview({
+          attachPlayback,
           root: byId("views"),
           primaryController: {
             node: byId("primary-view"), video,
@@ -1135,7 +1140,7 @@ async function boot() {
               state.wantsPlay = value;
               if (value && state.phase === "error") loadScene();
               else if (value) play();
-              else video.pause();
+              else playback.pause();
             },
           },
           openPrimary(id) {
@@ -1208,7 +1213,7 @@ async function boot() {
       setSource(state.sourceIndex, target);
     } else if (video.currentTime !== relative) {
       setBuffering(true);
-      video.currentTime = relative;
+      void playback.seek(relative);
     }
     byId("seek").value = String(target);
     paintSeek();
@@ -1251,7 +1256,7 @@ async function boot() {
     phase("deleting");
     showControls();
     byId("notice").textContent = "";
-    video.pause();
+    playback.pause();
     video.removeAttribute("src");
     video.removeAttribute("poster");
     video.load();
@@ -1594,7 +1599,7 @@ async function boot() {
   function cancelTouch() {
     if (touch) {
       clearTimeout(touch.timer);
-      if (touch.phase === "holding") video.playbackRate = touch.rate;
+      if (touch.phase === "holding") playback.setPlaybackRate(touch.rate);
       touch = null;
     }
     byId("gesture-feedback").hidden = true;
@@ -1632,7 +1637,7 @@ async function boot() {
       if (!touch || touch.phase !== "pending" || video.paused) return;
       cancelTap();
       touch.phase = "holding";
-      video.playbackRate = 2;
+      playback.setPlaybackRate(2);
       byId("gesture-feedback").hidden = false;
     }, 200);
   });
@@ -1661,7 +1666,7 @@ async function boot() {
     clearTimeout(ended.timer);
     touch = null;
     if (ended.phase === "holding") {
-      video.playbackRate = ended.rate;
+      playback.setPlaybackRate(ended.rate);
       byId("gesture-feedback").hidden = true;
       return;
     }
@@ -1701,7 +1706,7 @@ async function boot() {
     if (tap && now - tap.time < 300 && side && tap.side === side) {
       const started = tap.started;
       cancelTap();
-      if (started) { state.wantsPlay = false; multiview?.setPlaying(false); video.pause(); }
+      if (started) { state.wantsPlay = false; multiview?.setPlaying(false); playback.pause(); }
       touchSeek(side, ended.x, ended.y);
       return;
     }
@@ -1829,7 +1834,7 @@ async function boot() {
     scrub.pointerId = event.pointerId;
     scrub.generation = state.generation;
     this.setPointerCapture(event.pointerId);
-    video.pause();
+    playback.pause();
     multiview?.suspend(true);
     updateScrub(event);
   });
@@ -1976,16 +1981,16 @@ async function boot() {
   });
   function toggleMute() {
     if (video.muted || video.volume === 0) {
-      if (video.volume === 0) video.volume = 1;
-      video.muted = false;
-    } else video.muted = true;
+      if (video.volume === 0) playback.setVolume(1);
+      playback.setMuted(false);
+    } else playback.setMuted(true);
     updateVolume();
     if (!video.muted && state.wantsPlay) { play(); multiview?.setPlaying(true); }
   }
   byId("volume-mute").onclick = toggleMute;
   byId("volume").oninput = function () {
-    video.volume = Number(this.value) / 100;
-    video.muted = video.volume === 0;
+    playback.setVolume(Number(this.value) / 100);
+    playback.setMuted(video.volume === 0);
   };
   video.addEventListener("volumechange", updateVolume);
   video.addEventListener("ratechange", () => multiview?.setRate(video.playbackRate));
@@ -2020,7 +2025,7 @@ async function boot() {
   video.addEventListener("loadedmetadata", function () {
     if (!state.scene || video.currentSrc !== state.sourceURL) return;
     if (state.resume) {
-      video.currentTime = state.resume;
+      void playback.seek(state.resume);
       state.resume = 0;
     }
   });
@@ -2094,7 +2099,7 @@ async function boot() {
     navigate(1);
   });
   video.addEventListener("timeupdate", function () {
-    scheduleTimeline();
+    if (state.phase !== "playing") scheduleTimeline();
     if (!state.scene || video.currentSrc !== state.sourceURL || state.resume ||
         video.paused || video.ended || video.seeking || video.readyState < 2) return;
     if (["loading", "ready", "paused"].includes(state.phase)) {
@@ -2217,14 +2222,15 @@ async function boot() {
     else if (action === "fullscreen") enterFullscreen();
     else if (action === "volume-up" || action === "volume-down") {
       const volume = video.muted ? 0 : video.volume;
-      video.volume = Math.max(0, Math.min(1, volume + (action === "volume-up" ? 0.05 : -0.05)));
-      video.muted = video.volume === 0;
+      playback.setVolume(volume + (action === "volume-up" ? 0.05 : -0.05));
+      playback.setMuted(video.volume === 0);
       showControls();
     } else if (action === "toggle") toggle();
     else showControls();
   });
-  window.addEventListener("pagehide", function () {
+  window.addEventListener("pagehide", function (event) {
     saveProgress(true);
+    if (!event.persisted) playback.destroy();
   });
   setInterval(function () {
     if (state.phase === "playing") saveProgress();

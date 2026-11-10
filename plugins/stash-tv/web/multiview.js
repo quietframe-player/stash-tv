@@ -68,6 +68,13 @@ export function createMultiview(options) {
   let audio = { volume: options.primaryController.video.volume, muted: options.primaryController.video.muted };
   let rate = options.primaryController.video.playbackRate;
 
+  function applyAudio(playback) {
+    const muted = audio.muted || oneSoundtrack || audio.volume === 0;
+    // A positive volume unmutes in Video.js and can pause muted autoplay on iOS.
+    if (!muted) playback.setVolume(audio.volume);
+    playback.setMuted(muted);
+  }
+
   function groupPlaying(value) {
     options.primaryController.setPlaying(value);
     setPlaying(value);
@@ -105,7 +112,7 @@ export function createMultiview(options) {
     });
     if (stream.offset && !buffered) { save(slot); source(slot, slot.index, target); }
     else if (slot.video.readyState < 1) slot.resume = target;
-    else slot.video.currentTime = relative;
+    else if (slot.video.currentTime !== relative) void slot.playback.seek(relative);
   }
 
   function closeSeek() {
@@ -215,9 +222,9 @@ export function createMultiview(options) {
   }
 
   function play(slot) {
-    if (!slot.wantsPlay || suspended || !slot.scene || slot.resume || slot.phase === "error") return;
+    if (!slot.wantsPlay || suspended || !slot.scene || slot.resume || slot.phase === "error" || !slot.video.paused) return;
     const generation = slot.generation;
-    slot.video.play().catch(error => {
+    slot.playback.play().catch(error => {
       if (generation !== slot.generation || error.name === "AbortError") return;
       fail(slot, error.name === "NotAllowedError" ? "Tap to play this video" : "Retry video", error.name === "NotAllowedError");
     });
@@ -280,7 +287,7 @@ export function createMultiview(options) {
     slot.node.dataset.phase = "loading";
     slot.node.dataset.decoded = "false";
     slot.retry.hidden = true;
-    slot.video.pause();
+    slot.playback.pause();
     slot.video.src = slot.url;
     slot.video.load();
     options.changed();
@@ -311,7 +318,7 @@ export function createMultiview(options) {
     slot.node.dataset.phase = "loading";
     slot.node.dataset.decoded = "false";
     slot.retry.hidden = true;
-    slot.video.pause();
+    slot.playback.pause();
     slot.video.removeAttribute("src");
     slot.video.load();
     try {
@@ -340,9 +347,10 @@ export function createMultiview(options) {
     node.className = "view extra-view";
     const video = document.createElement("video");
     video.playsInline = true;
-    video.volume = audio.volume;
-    video.muted = video.defaultMuted = audio.muted || oneSoundtrack;
-    video.playbackRate = rate;
+    const playback = options.attachPlayback(video);
+    video.defaultMuted = audio.muted || oneSoundtrack || audio.volume === 0;
+    applyAudio(playback);
+    playback.setPlaybackRate(rate);
     video.preload = "metadata";
     video.crossOrigin = "anonymous";
     const cover = document.createElement("canvas");
@@ -357,13 +365,13 @@ export function createMultiview(options) {
     loader.classList.add("tile-loading");
     node.append(video, cover, loader, retry);
     options.root.appendChild(node);
-    const slot = { node, video, cover, retry, id: "", scene: null, index: 0, generation: 0,
+    const slot = { node, video, playback, cover, retry, id: "", scene: null, index: 0, generation: 0,
       wantsPlay: defaultPlaying, fill: mountFrameFill(node,video),
       offset: 0, resume: 0, url: "", phase: "loading", waitingAt: 0, counted: false, playedAt: 0, timer: 0, frame: 0 };
     retry.onclick = () => groupPlaying(true);
     video.addEventListener("loadedmetadata", () => {
       if (slot.scene && video.currentSrc === slot.url && slot.resume) {
-        video.currentTime = slot.resume;
+        void playback.seek(slot.resume);
         slot.resume = 0;
       }
     });
@@ -429,9 +437,10 @@ export function createMultiview(options) {
     cancelFrame(slot);
     clearTimeout(slot.timer);
     slot.scene = null;
-    slot.video.pause();
+    slot.playback.pause();
     slot.video.removeAttribute("src");
     slot.video.load();
+    slot.playback.destroy();
     slot.node.remove();
   }
 
@@ -442,7 +451,7 @@ export function createMultiview(options) {
       if (value && !suspended) {
         if (slot.phase === "error") retrySlot(slot);
         else play(slot);
-      } else { slot.video.pause(); present(slot); }
+      } else { slot.playback.pause(); present(slot); }
     });
     options.changed();
   }
@@ -483,13 +492,13 @@ export function createMultiview(options) {
     seekFraction(fraction) { slots.forEach(slot => seekSlot(slot, fraction * (Number(slot.scene?.files[0]?.duration) || 0))); },
     setAudio(volume, muted) {
       audio = {volume, muted};
-      slots.forEach(slot => { slot.video.volume = volume; slot.video.muted = muted || oneSoundtrack; });
+      slots.forEach(slot => applyAudio(slot.playback));
     },
-    setRate(value) { rate = value; slots.forEach(slot => { slot.video.playbackRate = value; }); },
+    setRate(value) { rate = value; slots.forEach(slot => slot.playback.setPlaybackRate(value)); },
     loading: () => slots.some(slot => slot.phase === "loading"),
     suspend(value) {
       suspended = value;
-      slots.forEach(slot => { if (value) slot.video.pause(); else play(slot); });
+      slots.forEach(slot => { if (value) slot.playback.pause(); else play(slot); });
     },
     primaryChanged(id) { slots.filter(slot => slot.id === id).forEach(replacement); },
     dispose(keepalive) {

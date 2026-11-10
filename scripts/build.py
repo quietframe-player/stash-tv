@@ -5,6 +5,8 @@ import json
 from datetime import date
 from pathlib import Path
 import shutil
+import subprocess
+import tempfile
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -22,19 +24,25 @@ def build():
     output.mkdir(exist_ok=True)
     archive = output / "stash-tv.zip"
     files = [PLUGIN / "stash-tv.yml", PLUGIN / "launcher.js", *sorted((PLUGIN / "web").glob("*"))]
-    with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as package:
-        for path in files:
-            if not path.is_file():
-                raise RuntimeError(f"Unexpected package entry: {path.name}")
-            entry = zipfile.ZipInfo(path.relative_to(PLUGIN).as_posix(), (2026, 1, 1, 0, 0, 0))
-            entry.compress_type = zipfile.ZIP_DEFLATED
-            entry.external_attr = 0o100644 << 16
-            package.writestr(entry, path.read_bytes())
-        for name in ["LICENSE", "README.md"]:
-            entry = zipfile.ZipInfo(name, (2026, 1, 1, 0, 0, 0))
-            entry.compress_type = zipfile.ZIP_DEFLATED
-            entry.external_attr = 0o100644 << 16
-            package.writestr(entry, (ROOT / name).read_bytes())
+    entries = {path.relative_to(PLUGIN).as_posix(): path for path in files if path.name != "videojs.js"}
+    with tempfile.TemporaryDirectory() as directory:
+        bundle = Path(directory) / "player.js"
+        subprocess.run(["bun", "build", "plugins/stash-tv/web/player.js", "--target", "browser", "--minify",
+                        "--outfile", str(bundle)], cwd=ROOT, check=True, stdout=subprocess.DEVNULL)
+        entries.update({
+            "LICENSE": ROOT / "LICENSE",
+            "README.md": ROOT / "README.md",
+            "web/player.js": bundle,
+            "web/VIDEOJS-LICENSE.txt": ROOT / "node_modules/@videojs/core/LICENSE",
+        })
+        with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as package:
+            for name, path in entries.items():
+                if not path.is_file():
+                    raise RuntimeError(f"Unexpected package entry: {path.name}")
+                entry = zipfile.ZipInfo(name, (2026, 1, 1, 0, 0, 0))
+                entry.compress_type = zipfile.ZIP_DEFLATED
+                entry.external_attr = 0o100644 << 16
+                package.writestr(entry, path.read_bytes())
     digest = hashlib.sha256(archive.read_bytes()).hexdigest()
     index = (f"- id: stash-tv\n  name: Stash TV\n  metadata:\n"
              f"    description: Lightweight fullscreen player for TV remotes, phones, and desktop browsers.\n"

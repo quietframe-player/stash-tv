@@ -1,12 +1,16 @@
 {
   "name": "stash-tv",
-  "version": "0.5.6",
-  "releaseDate": "2026-10-17",
+  "version": "0.6.0",
+  "releaseDate": "2026-11-10",
   "private": true,
   "type": "module",
   "scripts": {
     "test": "bun test tests",
     "build": "python3 -B scripts/build.py",
     "test:integration": "python3 -B scripts/integration.py --apply"
+  },
+  "dependencies": {
+    "@videojs/core": "10.3.0",
+    "@videojs/store": "10.3.0"
   }
 }
