@@ -64,6 +64,7 @@ export function createMultiview(options) {
   let queue = null;
   let seekFrame = 0;
   const seekers = [];
+  const stopWatchingSeek = [];
   const oneSoundtrack = singleSoundtrack(navigator.userAgent, navigator.platform, navigator.maxTouchPoints);
   let audio = { volume: options.primaryController.video.volume, muted: options.primaryController.video.muted };
   let rate = options.primaryController.video.playbackRate;
@@ -117,7 +118,22 @@ export function createMultiview(options) {
 
   function closeSeek() {
     cancelAnimationFrame(seekFrame); seekFrame = 0;
+    for (const unsubscribe of stopWatchingSeek.splice(0)) unsubscribe();
     seekers.forEach(row => row.cancel());
+  }
+
+  function clearSeek() {
+    closeSeek();
+    seekers.length = 0;
+    options.seekRows.textContent = "";
+  }
+
+  function scheduleSeek() {
+    if (seekFrame || options.seekPanel.hidden) return;
+    seekFrame = requestAnimationFrame(() => {
+      seekFrame = 0;
+      if (!options.seekPanel.hidden) seekers.forEach(row => row.render());
+    });
   }
 
   function mountSeek(controller, index) {
@@ -125,6 +141,7 @@ export function createMultiview(options) {
     node.className = "grid-seek-row";
     const frame = document.createElement("canvas");
     frame.width = 96; frame.height = 54;
+    const context = frame.getContext("2d");
     frame.setAttribute("aria-hidden", "true");
     const details = document.createElement("div");
     const label = document.createElement("div");
@@ -138,26 +155,33 @@ export function createMultiview(options) {
     range.setAttribute("aria-label", "Seek video " + (index + 1));
     details.append(label, range); node.append(frame, details);
     options.seekRows.appendChild(node);
-    let pointer = null, pending = null, thumbnailAt = -1;
+    let pointer = null, pending = null, thumbnailAt = -1, thumbnailSource = "";
     const row = {
-      node, range, controller,
+      range, controller,
       render() {
         const duration = controller.duration();
         const position = controller.position();
-        range.disabled = !duration;
-        range.max = String(duration || 1);
+        if (range.disabled !== !duration) range.disabled = !duration;
+        const max = String(duration || 1);
+        if (range.max !== max) range.max = max;
         if (pending !== null && !controller.video.seeking && Math.abs(position - pending) < 0.3) pending = null;
-        if (pointer === null) range.value = String(pending ?? position);
+        const value = String(Math.round((pending ?? position) * 10) / 10);
+        if (pointer === null && range.value !== value) range.value = value;
         const seconds = Number(range.value);
-        range.style.setProperty("--progress", 100 * seconds / (duration || 1) + "%");
+        const progress = 100 * seconds / (duration || 1) + "%";
+        if (range.style.getPropertyValue("--progress") !== progress) range.style.setProperty("--progress", progress);
         const text = options.timeLabel(seconds) + " / " + options.timeLabel(duration);
-        if (time.textContent !== text) time.textContent = text;
-        range.setAttribute("aria-valuetext", text);
+        if (time.textContent !== text) {
+          time.textContent = text;
+          range.setAttribute("aria-valuetext", text);
+        }
         const at = Math.floor(position);
         const video = controller.video;
-        if (at !== thumbnailAt && video.readyState >= 2 && !video.seeking && video.videoWidth) {
-          frame.getContext("2d").drawImage(video, 0, 0, 96, 54);
+        if ((at !== thumbnailAt || video.currentSrc !== thumbnailSource) &&
+            video.readyState >= 2 && !video.seeking && video.videoWidth) {
+          context.drawImage(video, 0, 0, 96, 54);
           thumbnailAt = at;
+          thumbnailSource = video.currentSrc;
         }
       },
       cancel() {
@@ -201,13 +225,18 @@ export function createMultiview(options) {
   }
 
   function openSeek(focus) {
-    function render() {
-      seekFrame = 0;
-      if (options.seekPanel.hidden) return;
-      seekers.forEach(row => row.render());
-      seekFrame = requestAnimationFrame(render);
+    closeSeek();
+    const frameEvents = ["loadeddata", "canplay"];
+    for (const row of seekers) {
+      const { playback, video } = row.controller;
+      const unsubscribe = playback.subscribe(scheduleSeek);
+      frameEvents.forEach(type => video.addEventListener(type, scheduleSeek));
+      stopWatchingSeek.push(() => {
+        unsubscribe();
+        frameEvents.forEach(type => video.removeEventListener(type, scheduleSeek));
+      });
+      row.render();
     }
-    closeSeek(); render();
     if (focus) seekers[0]?.range.focus();
   }
 
@@ -468,8 +497,7 @@ export function createMultiview(options) {
     neighbours: () => gridNeighbours(queue),
     openSeek, closeSeek,
     setCount(count) {
-      closeSeek();
-      options.seekRows.textContent = ""; seekers.length = 0;
+      clearSeek();
       if (count > 1 && !primaryFill) primaryFill = mountFrameFill(options.primaryController.node, options.primaryController.video);
       if (count === 1 && primaryFill) { primaryFill.dispose(); primaryFill = null; }
       while (slots.length > count - 1) unmount(slots.pop());
@@ -477,7 +505,7 @@ export function createMultiview(options) {
       if (count > 1) {
         seekers.push(mountSeek(options.primaryController, 0));
         slots.forEach((slot, index) => seekers.push(mountSeek({
-          node: slot.node, video: slot.video, position: () => position(slot),
+          node: slot.node, video: slot.video, playback: slot.playback, position: () => position(slot),
           duration: () => Number(slot.scene?.files[0]?.duration) || 0,
           seek: seconds => seekSlot(slot, seconds),
         }, index + 1)));
@@ -502,7 +530,7 @@ export function createMultiview(options) {
     },
     primaryChanged(id) { slots.filter(slot => slot.id === id).forEach(replacement); },
     dispose(keepalive) {
-      closeSeek(); options.seekRows.textContent = ""; seekers.length = 0;
+      clearSeek();
       clearInterval(progress);
       primaryFill?.dispose(); primaryFill = null;
       while (slots.length) unmount(slots.pop(), keepalive);

@@ -394,6 +394,13 @@ export default async function verifyMobile(page, options) {
     await touch('down',195,320); await touch('move',195,450); await touch('up',195,450);
     await settled();
     check((await sample()).scene===before.scene,'Previous at first scene changed queue');
+    await touch('down',195,420); await touch('move',195,365);
+    await page.locator('#swipe-incoming').waitFor({state:'visible',timeout:3000});
+    await touch('move',195,475);
+    await page.locator('#swipe-incoming').waitFor({state:'hidden',timeout:3000});
+    await touch('move',195,365);
+    await page.locator('#swipe-incoming').waitFor({state:'visible',timeout:3000});
+    await touch('cancel'); await settled();
     results.push({name:'cancelled swipe and queue boundary return without changing video',passed:true});
     await page.emulateMedia({reducedMotion:'reduce'});
     await page.waitForFunction(()=>matchMedia('(prefers-reduced-motion: reduce)').matches);

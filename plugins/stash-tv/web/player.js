@@ -259,6 +259,7 @@ async function boot() {
     image: null,
     controller: null,
     time: null,
+    clientX: null,
     pointerId: null,
     generation: 0,
     frame: 0,
@@ -567,6 +568,7 @@ async function boot() {
 
   function hidePreview() {
     clearTimeout(scrub.hideTimer);
+    scrub.clientX = null;
     scrub.time = null;
     scrub.exactTime = null;
     byId("preview-exact").hidden = true;
@@ -592,6 +594,7 @@ async function boot() {
   function capturePreview() {
     if (
       scrub.time === null ||
+      scrub.exactTime === scrub.time ||
       video.seeking ||
       video.readyState < 2 ||
       video.currentSrc !== state.sourceURL ||
@@ -664,23 +667,24 @@ async function boot() {
   function renderPreview() {
     if (scrub.frame) return;
     scrub.frame = requestAnimationFrame(function () {
+      if (scrub.clientX !== null) {
+        const clientX = scrub.clientX;
+        scrub.clientX = null;
+        updateScrub(clientX, scrub.pointerId !== null);
+      }
       scrub.frame = 0;
-      const cue = scrub.time === null ? null : previewAt(scrub.cues, scrub.time);
       const box = byId("seek-preview");
       if (scrub.time === null) { box.hidden = true; return; }
-      const exact = scrub.time !== null && scrub.exactTime === scrub.time;
-      const labels = scrub.time === null ? [] : markerLabelsAt(state.markers, scrub.time);
-      const label = byId("preview-marker");
-      label.textContent = labels.join(" · ");
-      label.hidden = !labels.length;
+      const cue = previewAt(scrub.cues, scrub.time);
+      const exact = scrub.exactTime === scrub.time;
+      const labels = markerLabelsAt(state.markers, scrub.time);
       const hasFrame = exact || (scrub.status === "ready" && !!cue);
-      byId("preview-frame").hidden = !hasFrame;
-      box.dataset.frame = String(hasFrame);
       const canvas = byId("preview-exact");
       const frameWidth = exact ? canvas.width : hasFrame ? cue.width : 280;
       const frameHeight = exact ? canvas.height : hasFrame ? cue.height : 158;
       const range = byId("seek");
       const timeline = range.parentElement;
+      const timelineWidth = timeline.clientWidth;
       const desiredWidth = hasFrame || labels.length
         ? Math.max(220, Math.min(560, 152 + player.clientWidth * 0.1))
         : Math.max(88, Math.min(180, 64 + player.clientWidth * 0.03));
@@ -690,16 +694,22 @@ async function boot() {
       );
       const width = Math.min(
         desiredWidth,
-        timeline.clientWidth,
+        timelineWidth,
         (maxHeight * frameWidth) / frameHeight,
       );
       const scale = width / frameWidth;
       const center =
         range.offsetLeft + 6 + ((range.clientWidth - 12) * scrub.time) / Number(range.max);
+      const label = byId("preview-marker");
+      const markerText = labels.join(" · ");
+      if (label.textContent !== markerText) label.textContent = markerText;
+      label.hidden = !labels.length;
+      byId("preview-frame").hidden = !hasFrame;
+      box.dataset.frame = String(hasFrame);
       box.style.width = width + "px";
       box.style.transform =
         "translate3d(" +
-        Math.max(0, Math.min(center - width / 2, timeline.clientWidth - width)) +
+        Math.max(0, Math.min(center - width / 2, timelineWidth - width)) +
         "px,0,0)";
       byId("preview-frame").style.height = frameHeight * scale + "px";
       const image = byId("preview-image");
@@ -721,14 +731,13 @@ async function boot() {
     if (state.layout > 1) { hidePreview(); return; }
     if (!state.scene || byId("seek").disabled) return;
     clearTimeout(scrub.hideTimer);
+    scrub.clientX = null;
+    const opening = scrub.time === null;
     const target = Math.max(0, Math.min(seconds, Number(byId("seek").max)));
-    if (target !== scrub.time) {
-      scrub.exactTime = null;
-      byId("preview-exact").hidden = true;
-    }
+    if (target !== scrub.time) scrub.exactTime = null;
     scrub.time = target;
     capturePreview();
-    showControls();
+    if (opening) showControls();
     if (scrub.status === "idle") loadPreview();
     renderPreview();
   }
@@ -890,6 +899,7 @@ async function boot() {
   }
 
   function setSource(index, seconds) {
+    scrub.exactTime = null;
     if (readyFrame) video.cancelVideoFrameCallback(readyFrame);
     readyFrame = 0;
     clearTimeout(state.sourceTimer);
@@ -1132,7 +1142,7 @@ async function boot() {
           attachPlayback,
           root: byId("views"),
           primaryController: {
-            node: byId("primary-view"), video,
+            node: byId("primary-view"), video, playback,
             position: currentTime,
             duration: () => Number(state.scene?.files[0]?.duration) || 0,
             seek: seconds => seek(seconds, false, false),
@@ -1389,6 +1399,7 @@ async function boot() {
   }
 
   function startSwipe() {
+    swipe.height = state.layout > 1 ? player.clientHeight : byId("primary-view").clientHeight;
     if (state.layout > 1) {
       resetSwipe();
       swipe.phase = "dragging";
@@ -1421,16 +1432,12 @@ async function boot() {
   }
 
   function moveSwipe(offset) {
+    if (swipe.phase !== "dragging") startSwipe();
     if (state.layout > 1) {
-      swipe.phase = "dragging";
-      player.dataset.swipePhase = "dragging";
-      swipe.offset = Math.max(-player.clientHeight, Math.min(player.clientHeight, offset));
+      swipe.offset = Math.max(-swipe.height, Math.min(swipe.height, offset));
       if (!reducedMotion()) byId("views").style.transform = "translateY(" + swipe.offset + "px)";
       return;
     }
-    swipe.phase = "dragging";
-    player.dataset.swipePhase = "dragging";
-    swipe.height = byId("primary-view").clientHeight;
     const direction = offset < 0 ? 1 : -1;
     const available = state.queue && advanceQueue(state.queue, direction);
     if (available) prepareIncoming(available.ids[available.index], direction);
@@ -1445,20 +1452,20 @@ async function boot() {
 
   function prepareIncoming(id, direction) {
     swipe.direction = direction;
-    swipe.height = byId("primary-view").clientHeight;
+    const incoming = byId("swipe-incoming");
+    if (incoming.hidden) incoming.hidden = false;
     if (swipe.target === id) return;
     swipe.target = id;
     const generation = ++swipe.generation;
-    const incoming = byId("swipe-incoming");
     incoming.width = incoming.height = 0;
     incoming.style.objectPosition = "50% 50%";
-    incoming.hidden = false;
     getStill(id).then(function (frame) {
       if (frame && generation === swipe.generation) drawStill(incoming, frame);
     });
   }
 
   function commitSwipe(direction, id) {
+    swipe.height = byId("primary-view").clientHeight;
     clearTimeout(swipe.timer);
     cancelAnimationFrame(swipe.frame);
     const reduce = reducedMotion();
@@ -1802,13 +1809,16 @@ async function boot() {
     if (target > 1) play();
   };
   byId("delete").onclick = deleteScene;
-  function updateScrub(event) {
+  function updateScrub(clientX, dragging = true) {
     const range = byId("seek");
     const bounds = range.getBoundingClientRect();
-    range.value = String(seekPosition(event.clientX, bounds.left, bounds.width, Number(range.max)));
-    paintSeek();
-    byId("elapsed").textContent = timelineLabel(Number(range.value));
-    showPreview(Number(range.value));
+    const seconds = seekPosition(clientX, bounds.left, bounds.width, Number(range.max));
+    if (dragging) {
+      range.value = String(seconds);
+      paintSeek();
+      byId("elapsed").textContent = timelineLabel(Number(range.value));
+    }
+    showPreview(dragging ? Number(range.value) : seconds);
   }
 
   function finishScrub(commit, restore = true) {
@@ -1818,6 +1828,7 @@ async function boot() {
     const target = Number(range.value);
     const current = scrub.generation === state.generation;
     scrub.pointerId = null;
+    scrub.clientX = null;
     if (range.hasPointerCapture(id)) range.releasePointerCapture(id);
     if (commit && current) seek(target);
     else { hidePreview(); scheduleTimeline(); }
@@ -1832,20 +1843,17 @@ async function boot() {
     clearTimeout(state.seekTimer);
     state.seekTarget = null;
     scrub.pointerId = event.pointerId;
+    scrub.clientX = null;
     scrub.generation = state.generation;
     this.setPointerCapture(event.pointerId);
     playback.pause();
     multiview?.suspend(true);
-    updateScrub(event);
+    updateScrub(event.clientX);
   });
   byId("seek").addEventListener("pointermove", function (event) {
-    if (scrub.pointerId !== null) {
-      if (event.pointerId === scrub.pointerId) updateScrub(event);
-      return;
-    }
-    if (event.pointerType === "touch") return;
-    const bounds = this.getBoundingClientRect();
-    showPreview(seekPosition(event.clientX, bounds.left, bounds.width, Number(this.max)));
+    if (scrub.pointerId === null ? event.pointerType === "touch" : event.pointerId !== scrub.pointerId) return;
+    scrub.clientX = event.clientX;
+    renderPreview();
   });
   byId("seek").addEventListener("pointerleave", function () {
     if (scrub.pointerId === null) hidePreview();
@@ -1853,7 +1861,7 @@ async function boot() {
   document.addEventListener("pointerup", function (event) {
     if (event.pointerId !== scrub.pointerId) return;
     event.preventDefault();
-    updateScrub(event);
+    updateScrub(event.clientX);
     finishScrub(true);
   });
   byId("seek").addEventListener("pointercancel", function (event) {
@@ -2121,7 +2129,9 @@ async function boot() {
       showControls();
     }
   });
-  player.addEventListener("mousemove", showControls);
+  player.addEventListener("mousemove", function () {
+    if (scrub.time === null) showControls();
+  });
   player.addEventListener("pointerdown", function (event) {
     if (!event.isPrimary) return;
     if (event.target !== surface) cancelTouch();
@@ -2141,7 +2151,11 @@ async function boot() {
   video.addEventListener("webkitendfullscreen", updateFullscreen);
   document.addEventListener("fullscreenchange", updateFullscreen);
   document.addEventListener("webkitfullscreenchange", updateFullscreen);
-  window.addEventListener("resize", renderPreview);
+  window.addEventListener("resize", function () {
+    if (swipe.phase === "dragging")
+      swipe.height = (state.layout > 1 ? player : byId("primary-view")).clientHeight;
+    renderPreview();
+  });
   window.addEventListener("resize", positionMarkers);
   document.addEventListener("keydown", function (event) {
     if (
