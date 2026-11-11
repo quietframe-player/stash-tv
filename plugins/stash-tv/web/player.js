@@ -1597,7 +1597,7 @@ async function boot() {
   tileFeedback.setAttribute("aria-hidden", "true");
   function scrubTile(dx, contact) {
     contact.target = Math.max(0, Math.min(contact.controller.duration() - 0.1,
-      contact.start + dx / Math.max(1, contact.width) * Math.min(120, contact.controller.duration())));
+      contact.start + dx / Math.max(1, contact.width) * contact.controller.duration()));
     if (tileFeedback.parentElement !== contact.controller.node) contact.controller.node.appendChild(tileFeedback);
     tileFeedback.textContent = timeLabel(contact.target);
     tileFeedback.hidden = false;

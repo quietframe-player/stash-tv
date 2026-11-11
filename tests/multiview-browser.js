@@ -81,7 +81,9 @@ export default async function verifyMultiview(page, options) {
     const ids=findScenes.scenes.map(s=>s.id);
     check(ids.length===5&&findScenes.scenes.every(s=>s.files[0].path.startsWith('/media/sintel')),'Expected five isolated Sintel fixtures');
     for (const id of ids) await api('mutation($id:ID!){sceneSaveActivity(id:$id,resume_time:3,playDuration:0)}',{id});
-    const url=options.baseURL+'/plugin/stash-tv/assets/index.html?autoplay=false&scene='+ids[0]+'&seed=17';
+    const longScene=findScenes.scenes.find(scene=>scene.files[0].path==='/media/sintel-180.mp4');
+    check(longScene,'Missing long-duration fixture');
+    const url=options.baseURL+'/plugin/stash-tv/assets/index.html?autoplay=false&scene='+longScene.id+'&seed=17';
     await page.goto(url); await ready(1);
     check(modules.length===0,'Single view eagerly loaded grid code'); pass('single view keeps the multiview module and extra streams unloaded');
     await click('#toggle'); await click('#layout-two'); await playing(2); const two=await snapshot();
@@ -118,7 +120,14 @@ export default async function verifyMultiview(page, options) {
     await page.keyboard.press('Escape');
     check(await page.locator('#grid-seek-panel').isHidden(),'Seek panel did not close');
     pass('on-demand per-video seek controls target one video and preserve the other paused positions');
-    for (const [index,fraction] of [[0,0.15],[2,-0.1],[3,0.18]]) {
+    check((await sample())[0].duration>120,'Long-duration scene is too short to exercise proportional scrubbing');
+    await page.evaluate(()=>{
+      window.tileSeeks=[0,0,0,0];
+      [...document.querySelectorAll('#views video')].forEach((video,index)=>
+        video.addEventListener('seeking',()=>{window.tileSeeks[index]++;}));
+    });
+    for (const [index,fraction] of [[0,0.1],[2,-0.1],[3,0.18]]) {
+      await page.evaluate(()=>{window.tileSeeks=[0,0,0,0];});
       const before = await sample();
       const b = await page.locator('#views > .view').nth(index).boundingBox();
       const x = b.x + b.width * 0.5, y = b.y + b.height * 0.35;
@@ -129,10 +138,12 @@ export default async function verifyMultiview(page, options) {
       check(moving.every((v,i)=>Math.abs(v.time-before[i].time)<0.05), 'Tile scrub requested a seek before release');
       await page.mouse.up(); await ready(4);
       const after = await sample();
-      check(after.every((v,i)=>Math.abs(v.time-(i===index?Math.max(0,Math.min(before[i].time+fraction*Math.min(120,v.duration),v.duration-0.1)):before[i].time))<0.3&&v.paused),
+      check(after.every((v,i)=>Math.abs(v.time-(i===index?Math.max(0,Math.min(before[i].time+fraction*v.duration,v.duration-0.1)):before[i].time))<0.3&&v.paused),
         'Mouse tile scrub affected the wrong video or pause intent: '+JSON.stringify({index,before,after}));
+      check((await page.evaluate(()=>window.tileSeeks)).every((count,i)=>count===(i===index?1:0)),
+        'Tile scrub did not commit exactly one seek to its target video');
     }
-    pass('mouse drags scrub the touched tile once on release without tile focus or other playback changes');
+    pass('mouse drags scale to the full scene duration and seek one tile once on release');
     await page.locator('#more').focus();
     await position(0.2,4); await delta('d',10,4); await delta('a',-10,4); await delta('ArrowRight',10,4); await delta('ArrowLeft',-10,4);
     pass('D/A and Left/Right seek all videos without focusing a tile');
@@ -240,7 +251,7 @@ export default async function verifyMultiview(page, options) {
       check((await sample()).every((v,i)=>Math.abs(v.time-before[i].time)<0.05), 'Touch scrub sought before release');
       await touch('up',x+b.width*fraction,y+1); await ready(4);
       const after = await sample();
-      check(after.every((v,i)=>Math.abs(v.time-(i===index?before[i].time+fraction*Math.min(120,v.duration):before[i].time))<0.35&&v.paused),
+      check(after.every((v,i)=>Math.abs(v.time-(i===index?before[i].time+fraction*v.duration:before[i].time))<0.35&&v.paused),
         'Touch tile scrub affected another feed or pause intent: '+JSON.stringify({index,before,after}));
       await touch('down',x,y); await touch('move',x+b.width*0.2,y);
       await touch('cancel',x+b.width*0.2,y); await ready(4);
@@ -263,7 +274,7 @@ export default async function verifyMultiview(page, options) {
     await touch('down',tx,ty); await touch('move',tx+box.width*0.1,ty); await touch('up',tx+box.width*0.1,ty);
     await ready(4); await playing(4);
     const afterPlayingScrub=await sample();
-    check(afterPlayingScrub.every((v,i)=>i===1?v.time>beforePlayingScrub[i].time+Math.min(120,v.duration)*0.1-0.35:
+    check(afterPlayingScrub.every((v,i)=>i===1?v.time>beforePlayingScrub[i].time+v.duration*0.1-0.35:
       v.time>=beforePlayingScrub[i].time&&v.time<beforePlayingScrub[i].time+2),'Playing tile scrub moved another feed: '+JSON.stringify({beforePlayingScrub,afterPlayingScrub}));
     pass('tile scrubbing preserves playing intent while the other feeds keep advancing');
     const sharedBar=await page.locator('#seek').evaluate(el=>{

@@ -50,8 +50,9 @@ on mobile. A temporary panel shows a thumbnail, elapsed time, duration, and seek
 bar for each video. Scrubbing a row
 changes only that video and preserves playback intent. Close the panel to return
 to the unobstructed grid. No tile needs to be focused.
-Drag left or right on a tile to scrub that video. The time indicator follows the
-drag; releasing commits one seek. Other videos keep their positions and playing
+Drag left or right on a tile to scrub that video. Dragging 10% of its width moves
+10% of the video's duration. The time indicator follows the drag; releasing
+commits one seek. Other videos keep their positions and playing
 state. Vertical swipes still navigate the whole grid.
 
 LG webOS TVs support one native video stream at a time. Split controls are hidden

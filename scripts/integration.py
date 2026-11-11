@@ -162,10 +162,13 @@ plugins_path: /config/plugins
             command(["docker", "exec", container, "ffmpeg", "-hide_banner", "-loglevel", "error", "-i", "/media/sintel.mp4", "-c", "copy", "/media/sintel.mkv"])
         elif args.suite in ["buffering", "multiview", "grid-buffering"]:
             lengths = range(40, 56) if args.suite == "grid-buffering" else [40, 43, 46, 49]
+            if args.suite == "multiview":
+                lengths = [40, 43, 46, 180]
             for length in lengths:
                 delayed = ["-itsoffset", "0.066"] if length == 43 else []
                 progressive = ["-movflags", "+faststart"] if length != 46 else []
-                command(["docker", "exec", container, "ffmpeg", "-hide_banner", "-loglevel", "error", *delayed,
+                repeat = ["-stream_loop", "3"] if length == 180 else []
+                command(["docker", "exec", container, "ffmpeg", "-hide_banner", "-loglevel", "error", *delayed, *repeat,
                          "-i", "/media/sintel.mp4", "-t", str(length), "-c", "copy", *progressive,
                          f"/media/sintel-{length}.mp4"])
                 if args.suite == "grid-buffering":
