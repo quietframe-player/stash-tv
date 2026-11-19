@@ -146,6 +146,16 @@ export default async function verifyLatency(page, options) {
       });
       check(await paused.locator("#player").getAttribute("data-video-ready") === "true", "Paused playback waited for an unavailable presentation callback");
       results.push({ name: "paused decoded playback remains ready without presentation callbacks", passed: true });
+      const immediate = await paused.locator("#surface").evaluate(surface => {
+        surface.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true }));
+        return document.getElementById("video").currentTime;
+      });
+      check(Math.abs(immediate - 22.3) < 0.15, "A single keyboard seek waited for the key-repeat timer");
+      await paused.waitForFunction(() => {
+        const video = document.getElementById("video");
+        return video.paused && !video.seeking && video.readyState >= 2 && Math.abs(video.currentTime - 22.3) < 0.15;
+      });
+      results.push({ name: "single keyboard seeks start immediately at the exact requested position", passed: true });
     } finally { await pausedContext.close(); }
     check(errors.length === 0, errors.join("; "));
     return { passed: true, browser: options.browser, results, errors };

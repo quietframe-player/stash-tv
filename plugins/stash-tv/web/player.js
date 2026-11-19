@@ -290,6 +290,7 @@ async function boot() {
     sourceTimer: 0,
     timelineFrame: 0,
     seekTarget: null,
+    seekDelta: 0,
     seekTimer: 0,
     layout: 1,
   };
@@ -580,6 +581,7 @@ async function boot() {
     clearTimeout(scrub.warmTimer);
     clearTimeout(state.seekTimer);
     state.seekTarget = null;
+    state.seekDelta = 0;
     if (scrub.controller) scrub.controller.abort();
     if (scrub.image) scrub.image.src = "";
     cancelAnimationFrame(scrub.frame);
@@ -1203,14 +1205,11 @@ async function boot() {
   function seek(seconds, preview, broadcast = true) {
     clearTimeout(state.seekTimer);
     state.seekTarget = null;
+    state.seekDelta = 0;
     if (byId("seek").disabled || !state.scene || !state.sources.length) return;
     const duration = Number((state.scene.files[0] || {}).duration) || 0;
     const target = Math.max(0, Math.min(seconds, duration));
     if (broadcast && state.layout > 1) multiview?.seekFraction(duration ? target / duration : 0);
-    if (preview !== false) {
-      showPreview(target);
-      scrub.hideTimer = setTimeout(hidePreview, 1500);
-    } else hidePreview();
     const source = state.sources[state.sourceIndex];
     const relative = target - state.offset;
     const buffered = [video.buffered, video.seekable].every(function (ranges) {
@@ -1225,26 +1224,33 @@ async function boot() {
       setBuffering(true);
       void playback.seek(relative);
     }
+    if (preview !== false) {
+      showPreview(target);
+      scrub.hideTimer = setTimeout(hidePreview, 1500);
+    } else hidePreview();
     byId("seek").value = String(target);
     paintSeek();
     showControls();
   }
 
-  function queueSeek(delta, preview) {
+  function queueSeek(delta, preview, repeat = false) {
     if (byId("seek").disabled || !state.scene) return;
-    if (state.layout > 1) multiview?.seekBy(delta);
     const duration = Number((state.scene.files[0] || {}).duration) || 0;
+    state.seekDelta += delta;
     state.seekTarget = Math.max(
       0,
       Math.min((state.seekTarget === null ? currentTime() : state.seekTarget) + delta, duration),
     );
+    function commit() {
+      if (state.layout > 1) multiview?.seekBy(state.seekDelta);
+      seek(state.seekTarget, preview, false);
+    }
+    if (!repeat) { commit(); return; }
     if (preview !== false) showPreview(state.seekTarget);
     else hidePreview();
     scheduleTimeline();
     clearTimeout(state.seekTimer);
-    state.seekTimer = setTimeout(function () {
-      seek(state.seekTarget, preview, false);
-    }, 120);
+    state.seekTimer = setTimeout(commit, 120);
   }
 
   async function deleteScene(event) {
@@ -1842,6 +1848,7 @@ async function boot() {
     finishScrub(false);
     clearTimeout(state.seekTimer);
     state.seekTarget = null;
+    state.seekDelta = 0;
     scrub.pointerId = event.pointerId;
     scrub.clientX = null;
     scrub.generation = state.generation;
@@ -2228,10 +2235,10 @@ async function boot() {
     if (action === "previous") navigate(-1);
     else if (action === "next") navigate(1);
     else if (action === "random") random();
-    else if (action === "backward") queueSeek(-10);
-    else if (action === "forward") queueSeek(10);
-    else if (action === "backward-minute") queueSeek(-60);
-    else if (action === "forward-minute") queueSeek(60);
+    else if (action === "backward") queueSeek(-10, true, event.repeat);
+    else if (action === "forward") queueSeek(10, true, event.repeat);
+    else if (action === "backward-minute") queueSeek(-60, true, event.repeat);
+    else if (action === "forward-minute") queueSeek(60, true, event.repeat);
     else if (action === "delete") deleteScene(event);
     else if (action === "fullscreen") enterFullscreen();
     else if (action === "volume-up" || action === "volume-down") {

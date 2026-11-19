@@ -3,6 +3,8 @@ import { createFile, DataStream } from "./mp4box-parser.js?v=2.4.1";
 const ITEM_LIMIT = 64 * 1024 * 1024;
 const INDEX_LIMIT = 8 * 1024 * 1024;
 const PAGE = 1024 * 1024;
+const STARTUP_SECONDS = 6;
+const RANGE_LOOKBEHIND = 128 * 1024;
 let active = null;
 
 function trackShift(track, movieTimescale) {
@@ -52,15 +54,18 @@ async function prepare(input, signal) {
   file.onError = error => { parserError = new Error(String(error)); };
   let offset = 0, indexBytes = 0;
   while (!info) {
-    const range = await read(offset, Math.min(total || input.size, offset + PAGE) - 1);
+    // Native readers align byte ranges before the start of an MP4 index or keyframe.
+    const start = Math.max((ranges.at(-1)?.end ?? -1) + 1, offset - RANGE_LOOKBEHIND);
+    const range = await read(start, Math.min(total || input.size, offset + PAGE) - 1);
     indexBytes += range.data.byteLength;
-    range.data.fileStart = offset;
-    const suggested = file.appendBuffer(range.data);
+    const index = start === offset ? range.data : range.data.slice(offset - start);
+    index.fileStart = offset;
+    const suggested = file.appendBuffer(index);
     if (parserError) throw parserError;
     if (info) break;
     // Only mdat payloads can skip bytes; incomplete headers and padding must stay contiguous.
     const next = file.parsingMdat ? suggested : range.end + 1;
-    if (indexBytes >= INDEX_LIMIT || next >= input.size || next <= offset)
+    if (indexBytes >= INDEX_LIMIT || next >= input.size || next <= range.end)
       throw new Error("MP4 index exceeds preparation limit");
     offset = next;
   }
@@ -85,11 +90,12 @@ async function prepare(input, signal) {
       const sample = samples[i];
       const seconds = sample.cts / sample.timescale - delay;
       if (item.type !== "video" && seconds + sample.duration / sample.timescale < target) continue;
-      if (seconds > target + 30) break;
+      if (seconds > target + STARTUP_SECONDS) break;
       start = Math.min(start, sample.offset);
       end = Math.max(end, sample.offset + sample.size - 1);
     }
   }
+  start = Math.max(0, start - RANGE_LOOKBEHIND);
   end = Math.min(end, start + ITEM_LIMIT - bytes - 1);
   let cursor = start;
   for (const range of [...ranges].sort((a, b) => a.start - b.start)) {

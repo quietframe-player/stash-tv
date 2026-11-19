@@ -127,7 +127,7 @@ drags return to the current video. Scrolling over controls does not change video
 
 The player prepares two videos ahead and one behind in single view, or two complete
 groups ahead and one behind in multiview, in that order. For original MP4
-streams, it reads the index and buffers up to thirty seconds from the saved position,
+streams, it reads the index and buffers up to six seconds from the saved position,
 starting at the preceding keyframe. Preparation is serial, cancels obsolete work,
 and yields while the current video loads or seeks. Hidden pages stop preparation.
 A local service worker feeds the prepared ranges to the existing native video element.
