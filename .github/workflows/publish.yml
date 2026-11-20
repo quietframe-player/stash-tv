@@ -37,6 +37,9 @@ jobs:
         with:
           bun-version: latest
       - run: bun install --frozen-lockfile
+      - name: Use the Ubuntu HTTPS archive for WebKit dependencies
+        if: matrix.browser == 'webkit'
+        run: sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' /etc/apt/sources.list.d/ubuntu.sources
       - run: npx --yes --package @playwright/cli@0.1.22 playwright-cli install-browser ${{ matrix.browser }} --with-deps
       - run: python3 -B scripts/integration.py --apply --suite mobile --browser ${{ matrix.browser }}
       - run: python3 -B scripts/integration.py --apply --suite buffering --browser ${{ matrix.browser }}
