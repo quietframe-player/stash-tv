@@ -382,11 +382,14 @@ async function boot() {
   }
 
   function setBuffering(value) {
+    const wasBusy = player.dataset.buffering === "true";
     state.buffering = value;
     const busy = value || state.layout > 1 && multiview?.loading();
     player.dataset.buffering = String(!!busy);
     byId("toggle").setAttribute("aria-busy", String(!!busy));
-    buffer?.pause(document.hidden || busy || !["ready", "playing", "paused"].includes(state.phase));
+    if (canWarmNeighbours()) {
+      if (wasBusy) queueMicrotask(warmNeighbours);
+    } else pauseNeighbours();
     showControls();
   }
 
@@ -857,8 +860,19 @@ async function boot() {
     return bufferSetup;
   }
 
+  function canWarmNeighbours() {
+    return !embedded && !document.hidden && !state.buffering &&
+      (state.layout === 1 || multiview && !multiview.loading()) &&
+      ["ready", "playing", "paused"].includes(state.phase);
+  }
+
+  function pauseNeighbours() {
+    ++bufferPlan;
+    buffer?.pause(true);
+  }
+
   async function warmNeighbours() {
-    if (embedded) return;
+    if (!canWarmNeighbours()) return;
     const plan = ++bufferPlan;
     const generation = state.generation;
     const queue = state.queue;
@@ -877,11 +891,11 @@ async function boot() {
           signature: [file.id, file.size, file.mod_time].join(":"), current: neighbour.current };
       } catch { return null; }
     }))).filter(Boolean);
-    if (generation !== state.generation || plan !== bufferPlan) return;
+    if (generation !== state.generation || plan !== bufferPlan || !canWarmNeighbours()) return;
     const service = buffer || (items.some(item => !item.current) ? await ensureBuffer() : null);
-    if (!service || generation !== state.generation || plan !== bufferPlan) return;
-    service.pause(document.hidden || state.buffering || multiview?.loading() || !["ready", "playing", "paused"].includes(state.phase));
+    if (!service || generation !== state.generation || plan !== bufferPlan || !canWarmNeighbours()) return;
     service.update(items);
+    service.pause(false);
   }
 
   function play() {
@@ -1003,7 +1017,6 @@ async function boot() {
       state.markers = sceneMarkers(scene.scene_markers, Number(file.duration));
       renderMarkers();
       setSource(0, checkpoint(scene));
-      warmNeighbours();
       mark("ready");
       params.set("scene", id);
       params.set("seed", String(state.seed));
@@ -1134,7 +1147,7 @@ async function boot() {
     if (count === 1) params.delete("layout");
     else params.set("layout", String(count));
     history.replaceState(null, "", location.pathname + "?" + params.toString());
-    buffer?.pause(true);
+    pauseNeighbours();
     showControls();
     if (count > 1 && !multiviewSetup) {
       const url = new URL("./multiview.js", import.meta.url);
@@ -1751,11 +1764,11 @@ async function boot() {
   document.addEventListener("visibilitychange", function () {
     if (document.hidden) { cancelTouch(); endWheel(); closeGridSeek(); }
     multiview?.suspend(document.hidden);
-    buffer?.pause(document.hidden || state.buffering || multiview?.loading() || !["ready", "playing", "paused"].includes(state.phase));
-    if (!document.hidden) { warmNeighbours(); warmPreview(); if (state.wantsPlay) play(); }
+    if (document.hidden) pauseNeighbours();
+    else { warmNeighbours(); warmPreview(); if (state.wantsPlay) play(); }
   });
   window.addEventListener("pagehide", function (event) {
-    buffer?.pause(true);
+    pauseNeighbours();
     if (event.persisted) multiview?.suspend(true);
     else { multiview?.dispose(true); multiview = null; multiviewSetup = null; }
     if (!event.persisted) { buffer?.update([]); buffer?.dispose(); }
@@ -2034,9 +2047,7 @@ async function boot() {
   setInterval(function () {
     if (state.phase === "playing") recoverTruncatedStream();
   }, 500);
-  setInterval(function () {
-    if (!document.hidden && !state.buffering && ["ready", "playing", "paused"].includes(state.phase)) warmNeighbours();
-  }, 30000);
+  setInterval(warmNeighbours, 30000);
   video.addEventListener("loadedmetadata", function () {
     if (!state.scene || video.currentSrc !== state.sourceURL) return;
     if (state.resume) {
@@ -2061,7 +2072,6 @@ async function boot() {
       )
         return;
       presentFrame();
-      if (state.phase === "loading") warmNeighbours();
       if (state.phase === "loading") {
         if (state.wantsPlay) play();
         else phase("ready", "Press Play to start.");

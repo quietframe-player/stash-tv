@@ -4,6 +4,18 @@ export default async function verifyGridBuffering(page, options) {
   page.on("pageerror", error => errors.push(error.message));
   await page.addInitScript(() => {
     window.bufferEvents = [];
+    window.sceneReads = [];
+    const nativeFetch = window.fetch;
+    window.fetch = async function (resource, init) {
+      const input = new URL(resource, location.href).pathname.endsWith("/graphql") &&
+        typeof init?.body === "string" && JSON.parse(init.body);
+      if (!input?.query?.startsWith("query TVScene(")) return nativeFetch.call(this, resource, init);
+      const id = input.variables.id;
+      window.sceneReads.push({ id, started: true });
+      const response = await nativeFetch.call(this, resource, init);
+      if (response.ok) window.sceneReads.push({ id, received: true });
+      return response;
+    };
     window.gridHandoff = { hold: false, callbacks: [] };
     const request = HTMLVideoElement.prototype.requestVideoFrameCallback;
     HTMLVideoElement.prototype.requestVideoFrameCallback = function(callback) {
@@ -47,6 +59,16 @@ export default async function verifyGridBuffering(page, options) {
       await page.setViewportSize({ width: count === 4 ? 390 : 1200, height: count === 4 ? 844 : 800 });
       await page.goto(options.baseURL + "/plugin/stash-tv/assets/index.html?autoplay=false&debug=1&seed=17&scene=" + ids[0] + "&layout=" + count);
       await ready(count);
+      const reads = await page.evaluate(foreground => {
+        const received = new Set(), early = [];
+        for (const event of window.sceneReads) {
+          if (foreground.includes(event.id) && event.received) received.add(event.id);
+          else if (!foreground.includes(event.id) && event.started && received.size < foreground.length) early.push(event.id);
+        }
+        return { received: received.size, early };
+      }, [ids[0], ids[4], ids[8], ids[12]].slice(0, count));
+      check(reads.received === count && !reads.early.length, "Neighbour requests competed with foreground scene reads: " + JSON.stringify(reads));
+      results.push({ name: count + " foreground scenes load before neighbouring metadata reads", passed: true });
       const current = await snapshot();
       check(JSON.stringify(current) === JSON.stringify([ids[0], ids[4], ids[8], ids[12]].slice(0, count)), "Unexpected isolated grid: " + JSON.stringify(current));
       const group = direction => current.map(id => ids[(ids.indexOf(id) + direction + ids.length) % ids.length]);
