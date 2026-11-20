@@ -31,7 +31,8 @@ export default async function verifyLatency(page, options) {
     const matroska = findScenes.scenes.find(scene => scene.files[0].path === "/media/sintel.mkv").id;
     await page.goto(options.baseURL + "/plugin/stash-tv/assets/index.html?autoplay=false&scene=" + id);
     await ready();
-    for (const fromBeginning of [false, true]) {
+    for (const scenario of ["resume", "startFromBeginning", "endBeforeQueue"]) {
+      const fromBeginning = scenario === "startFromBeginning";
       const startupContext = await page.context().browser().newContext({ serviceWorkers: "block" });
       let releaseQueue;
       const queueGate = new Promise(resolve => { releaseQueue = resolve; });
@@ -76,6 +77,23 @@ export default async function verifyLatency(page, options) {
         const disabled = await startup.evaluate(() => ["next", "previous", "random", "layout-two", "delete"]
           .every(name => document.getElementById(name).disabled));
         check(disabled, "Queue controls became active before the library order arrived");
+        if (scenario === "endBeforeQueue") {
+          await startup.locator("#seek").evaluate(range => {
+            range.value = String(Number(range.max) - 0.2);
+            range.dispatchEvent(new Event("change", { bubbles: true }));
+          });
+          await startup.waitForFunction(() => {
+            const video = document.getElementById("video");
+            return !video.seeking && video.duration - video.currentTime < 0.4;
+          });
+          await startup.locator("#surface").click();
+          await startup.waitForFunction(() => document.getElementById("video").ended);
+          releaseQueue();
+          await startup.waitForFunction(expected => new URL(location.href).searchParams.get("scene") === expected &&
+            document.getElementById("player").dataset.videoReady === "true", matroska);
+          results.push({ name: "autoplay advances when a linked video ends before its queue arrives", passed: true });
+          continue;
+        }
         releaseQueue();
         if (fromBeginning) {
           await startup.waitForFunction(() => document.getElementById("notice").textContent.startsWith("Queue could not load"));

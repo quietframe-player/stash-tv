@@ -1089,7 +1089,8 @@ async function boot() {
       applySettings(result.configuration);
       if (started && state.queue.ids[state.queue.index] === requestedId) {
         syncQueueControls();
-        warmNeighbours();
+        if (video.ended && state.wantsPlay) navigate(1);
+        else warmNeighbours();
         return;
       }
       await loadScene();
@@ -2158,6 +2159,7 @@ async function boot() {
   video.addEventListener("loadeddata", warmPreview);
   video.addEventListener("playing", warmPreview);
   video.addEventListener("ended", function () {
+    if (!state.scene || video.currentSrc !== state.sourceURL || !video.ended) return;
     if (recoverTruncatedStream()) return;
     saveProgress();
     navigate(1);
