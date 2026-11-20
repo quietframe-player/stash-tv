@@ -249,6 +249,7 @@ async function boot() {
   let buffer = null;
   let bufferSetup = null;
   let bufferPlan = 0;
+  let preparationAllowed = null;
   let readyFrame = 0;
   let queueLoad = 0;
   let multiview = null;
@@ -397,6 +398,7 @@ async function boot() {
     byId("toggle").setAttribute("aria-busy", String(!!busy));
     if (canWarmNeighbours()) {
       if (wasBusy) queueMicrotask(warmNeighbours);
+      else updatePreparation();
     } else pauseNeighbours();
     showControls();
   }
@@ -883,7 +885,27 @@ async function boot() {
 
   function pauseNeighbours() {
     ++bufferPlan;
+    preparationAllowed = null;
     buffer?.pause(true);
+  }
+
+  function updatePreparation() {
+    if (preparationAllowed === null || !canWarmNeighbours()) return;
+    // Wait for a reserve before competing for bandwidth, then stop before a tile runs dry.
+    const seconds = preparationAllowed ? 2 : 4;
+    const allowed = [...byId("views").querySelectorAll("video")].every(function (tile) {
+      if (tile.paused || tile.ended) return true;
+      const time = tile.currentTime;
+      const target = Math.min(tile.duration || Infinity, time + seconds * tile.playbackRate);
+      const ranges = tile.buffered;
+      for (let i = 0; i < ranges.length; i++) {
+        if (ranges.start(i) <= time && ranges.end(i) >= target - 0.05) return true;
+      }
+      return false;
+    });
+    if (allowed === preparationAllowed) return;
+    preparationAllowed = allowed;
+    buffer.pause(!allowed);
   }
 
   async function warmNeighbours() {
@@ -910,7 +932,8 @@ async function boot() {
     const service = buffer || (items.some(item => !item.current) ? await ensureBuffer() : null);
     if (!service || generation !== state.generation || plan !== bufferPlan || !canWarmNeighbours()) return;
     service.update(items);
-    service.pause(false);
+    preparationAllowed ??= false;
+    updatePreparation();
   }
 
   function play() {
@@ -2086,6 +2109,7 @@ async function boot() {
   video.addEventListener("durationchange", recoverTruncatedStream);
   setInterval(function () {
     if (state.phase === "playing") recoverTruncatedStream();
+    updatePreparation();
   }, 500);
   setInterval(warmNeighbours, 30000);
   video.addEventListener("loadedmetadata", function () {

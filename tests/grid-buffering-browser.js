@@ -121,6 +121,25 @@ export default async function verifyGridBuffering(page, options) {
       results.push({ name: count + " videos reuse prepared ranges for Next and restore the complete previous grid", passed: true, playback });
       await page.screenshot({ path: options.reportDir + "/" + options.browser + "-grid-buffering-" + count + ".png" });
     }
+    await reset(ids);
+    await page.addInitScript(() => {
+      window.limitRunway = true;
+      const native = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, "buffered");
+      Object.defineProperty(HTMLMediaElement.prototype, "buffered", {
+        ...native,
+        get() { return window.limitRunway && !this.paused ? { length: 0 } : native.get.call(this); },
+      });
+      document.addEventListener("DOMContentLoaded", () => { document.getElementById("video").muted = true; }, { once: true });
+    });
+    await page.goto(options.baseURL + "/plugin/stash-tv/assets/index.html?autoplay=true&seed=17&scene=" + ids[0] + "&layout=4");
+    await ready(4);
+    await page.waitForFunction(() => [...document.querySelectorAll("#views video")].every(video => !video.paused && video.currentTime >= 22));
+    check(!await page.evaluate(() => window.bufferEvents.some(event => event.state === "preparing")),
+      "Speculative media started while a playing grid had insufficient buffered playback");
+    await page.evaluate(() => { window.limitRunway = false; });
+    await page.waitForFunction(() => window.bufferEvents.some(event => event.state === "prepared"));
+    results.push({name: "playing grid protects its buffer reserve and prepares neighbours when it recovers", passed: true});
+
     await page.evaluate(() => {
       Object.defineProperty(document, "hidden", { configurable: true, get: () => true });
       document.dispatchEvent(new Event("visibilitychange"));

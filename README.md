@@ -155,8 +155,9 @@ Other containers, oversized indexes, unsupported codecs, and browsers without se
 workers keep normal playback. Preparation never starts neighboring transcodes or
 changes video quality. Buffering requires HTTPS or localhost. Single view uses one
 native video element and at most four cached stills.
-Neighbor metadata requests and media preparation start when the visible videos are
-ready and yield during loading or seeking. Converted streams reuse their buffered, seekable
+Neighbor metadata requests start when the visible videos are ready. Media preparation
+also waits for enough buffered playback on each playing video and pauses before it
+runs short. Both yield during loading or seeking. Converted streams reuse their buffered, seekable
 window instead of restarting conversion for every jump. A position outside that
 window starts a new stream at the exact requested time.
 
