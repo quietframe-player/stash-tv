@@ -250,6 +250,7 @@ async function boot() {
   let bufferSetup = null;
   let bufferPlan = 0;
   let readyFrame = 0;
+  let queueLoad = 0;
   let multiview = null;
   let multiviewSetup = null;
   const scrub = {
@@ -365,20 +366,27 @@ async function boot() {
     byId("toggle").title = label;
     byId("surface").setAttribute("aria-label", label + " video");
     const blocked = ["deleting", "delete-unknown", "empty"].includes(value);
-    ["surface", "toggle", "random", "seek", "source"].forEach(function (id) {
+    ["surface", "toggle", "seek", "source"].forEach(function (id) {
       byId(id).disabled = blocked;
     });
+    syncQueueControls();
+    if (blocked) multiview?.setPlaying(false);
+    player.setAttribute("aria-busy", String(value === "deleting"));
+    setBuffering(value === "loading" || (value === "paused" && video.seeking));
+  }
+
+  function syncQueueControls() {
+    const blocked = ["deleting", "delete-unknown", "empty"].includes(state.phase);
     const available = new Set(state.queue?.ids).size;
+    byId("random").disabled = blocked || !state.queue;
     byId("layout-two").disabled = blocked || available < 2 || !allowMultiview;
     byId("layout-four").disabled = blocked || available < 4 || !allowMultiview;
     for (const id of ["layout-two", "layout-four"]) byId(id).hidden = !allowMultiview;
-    if (blocked) multiview?.setPlaying(false);
-    byId("delete").disabled = state.layout > 1 || !state.enableDelete || blocked || !state.scene;
+    byId("delete").hidden = state.layout > 1 || !state.enableDelete;
+    byId("delete").disabled = state.layout > 1 || !state.enableDelete || blocked || !state.queue || !state.scene;
     byId("previous").disabled = blocked || !state.queue || state.layout === 1 && state.queue.index === 0;
     byId("next").disabled =
       blocked || !state.queue || state.layout === 1 && state.queue.index === state.queue.ids.length - 1;
-    player.setAttribute("aria-busy", String(value === "deleting"));
-    setBuffering(value === "loading" || (value === "paused" && video.seeking));
   }
 
   function setBuffering(value) {
@@ -747,14 +755,21 @@ async function boot() {
     renderPreview();
   }
 
-  function getScene(id) {
+  const settingsFields = 'configuration{ui plugins(include:["stash-tv"])}';
+
+  function getScene(id, withSettings = false) {
     if (cache.has(id)) return cache.get(id);
     const query =
-      "query TVScene($id:ID!){findScene(id:$id){id resume_time paths{stream vtt screenshot} sceneStreams{url mime_type label} files{id size duration format mod_time} scene_markers{id title seconds end_seconds primary_tag{name}}}}";
+      "query TVScene($id:ID!){findScene(id:$id){id resume_time paths{stream vtt screenshot} sceneStreams{url mime_type label} files{id size duration format mod_time} scene_markers{id title seconds end_seconds primary_tag{name}}}" +
+      (withSettings ? settingsFields : "") + "}";
     const promise = api(query, { id: id })
       .then(async function (data) {
         if (!data.findScene) throw new Error("This scene is no longer in Stash. Choose Next.");
-        return { ...data.findScene, sources: await playbackSources(data.findScene) };
+        return {
+          ...data.findScene,
+          sources: await playbackSources(data.findScene),
+          ...(withSettings ? { settings: data.configuration } : {}),
+        };
       })
       .catch(function (error) {
         cache.delete(id);
@@ -947,7 +962,7 @@ async function boot() {
     }, 20000);
   }
 
-  async function loadScene(transition) {
+  async function loadScene(transition, id = state.queue?.ids[state.queue.index]) {
     cancelTouch();
     if (!transition) resetSwipe();
     if (state.layout > 1 && video.readyState >= 2 && video.videoWidth && !video.seeking) {
@@ -984,19 +999,15 @@ async function boot() {
     video.load();
     phase("loading", "Loading scene...");
     showControls();
-    const queue = state.queue;
-    const id = queue.ids[queue.index];
     if (state.layout > 1) getStill(id).then(frame => {
       if (frame && generation === state.generation && player.dataset.videoReady !== "true") {
         drawStill(byId("grid-cover"), frame);
         byId("grid-cover").hidden = false;
       }
     });
-    const available = new Set(queue.ids).size;
-    if (state.layout > available) setLayout(available >= 2 ? 2 : 1);
+    const available = new Set(state.queue?.ids).size;
+    if (available && state.layout > available) setLayout(available >= 2 ? 2 : 1);
     multiview?.primaryChanged(id);
-    byId("previous").disabled = state.layout === 1 && queue.index === 0;
-    byId("next").disabled = state.layout === 1 && queue.index === queue.ids.length - 1;
     byId("notice").textContent = "";
     try {
       const scene = await getScene(id);
@@ -1029,7 +1040,14 @@ async function boot() {
     }
   }
 
+  function applySettings(configuration) {
+    state.fromBeginning = !!configuration.ui?.alwaysStartFromBeginning;
+    state.enableDelete = configuration.plugins?.["stash-tv"]?.enableDelete === true;
+  }
+
   async function loadQueue(requestedId) {
+    const load = ++queueLoad;
+    let started = false;
     try {
       const values = new Uint32Array(1);
       crypto.getRandomValues(values);
@@ -1043,20 +1061,43 @@ async function boot() {
           : values[0] % 2147483647;
       cache.clear();
       stills.clear();
+      const layout = Number(params.get("layout"));
+      const wantsGrid = layout === 2 || layout === 4;
       const queue = api(
-        "query TVQueue($filter:FindFilterType!){findScenes(filter:$filter){scenes{id}} configuration{ui plugins(include:[\"stash-tv\"])}}",
+        "query TVQueue($filter:FindFilterType!){findScenes(filter:$filter){scenes{id}}" + settingsFields + "}",
         { filter: { sort: "random_" + state.seed, direction: "DESC", per_page: -1 } },
       );
-      if (/^[1-9][0-9]*$/.test(requestedId)) getScene(requestedId).catch(() => {});
-      const result = await queue;
+      let result;
+      // Explicit scene links can decode the first frame while the library order loads.
+      if (/^[1-9][0-9]*$/.test(requestedId)) {
+        if (wantsGrid) getScene(requestedId).catch(() => {});
+        else {
+          const first = getScene(requestedId, true).then(scene => ({ scene }), () => ({ scene: null }));
+          const startup = await Promise.race([first, queue.then(result => ({ result }), () => first)]);
+          if (load !== queueLoad) return;
+          result = startup.result;
+          if (startup.scene?.settings) {
+            applySettings(startup.scene.settings);
+            started = true;
+            await loadScene(undefined, requestedId);
+          }
+        }
+      }
+      result ||= await queue;
+      if (load !== queueLoad) return;
       state.queue = makeQueue(result.findScenes.scenes, requestedId);
-      state.fromBeginning = !!(result.configuration.ui || {}).alwaysStartFromBeginning;
-      state.enableDelete = (result.configuration.plugins["stash-tv"] || {}).enableDelete === true;
-      byId("delete").hidden = !state.enableDelete;
+      applySettings(result.configuration);
+      if (started && state.queue.ids[state.queue.index] === requestedId) {
+        syncQueueControls();
+        warmNeighbours();
+        return;
+      }
       await loadScene();
-      if ([2, 4].includes(Number(params.get("layout")))) setLayout(Number(params.get("layout")));
+      if (wantsGrid) setLayout(layout);
     } catch (error) {
-      phase("error", error.message);
+      if (load !== queueLoad) return;
+      if (started) byId("notice").textContent = "Queue could not load. Reload Stash TV to browse other videos.";
+      else phase("error", error.message);
       showControls();
     }
   }
@@ -1101,7 +1142,8 @@ async function boot() {
     if (state.phase === "error") {
       state.wantsPlay = true;
       if (state.queue) loadScene();
-      else loadQueue();
+      else if (state.scene) loadScene(undefined, state.scene.id);
+      else loadQueue(params.get("scene"));
     } else if (video.paused && !(state.layout > 1 && state.wantsPlay)) {
       play();
     } else {
@@ -1133,8 +1175,7 @@ async function boot() {
     byId("seek-videos").hidden = count === 1;
     byId("seek").setAttribute("aria-label", count > 1 ? "Seek all videos" : "Seek");
     byId("duration").textContent = count > 1 ? "100%" : timeLabel(Number(state.scene?.files[0]?.duration) || 0);
-    byId("delete").hidden = count > 1 || !state.enableDelete;
-    byId("delete").disabled = count > 1 || !state.enableDelete || !state.scene;
+    syncQueueControls();
     renderMarkers();
     player.dataset.layout = String(count);
     byId("fullscreen").disabled = count > 1 &&
@@ -1209,8 +1250,6 @@ async function boot() {
     multiview?.setPlaying(state.wantsPlay);
     multiview?.setCount(state.layout);
     byId("surface").focus();
-    byId("previous").disabled = state.layout === 1 && state.queue.index === 0;
-    byId("next").disabled = state.layout === 1 && state.queue.index === state.queue.ids.length - 1;
     warmNeighbours();
     warmPreview();
   }

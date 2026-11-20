@@ -31,6 +31,72 @@ export default async function verifyLatency(page, options) {
     const matroska = findScenes.scenes.find(scene => scene.files[0].path === "/media/sintel.mkv").id;
     await page.goto(options.baseURL + "/plugin/stash-tv/assets/index.html?autoplay=false&scene=" + id);
     await ready();
+    for (const fromBeginning of [false, true]) {
+      const startupContext = await page.context().browser().newContext({ serviceWorkers: "block" });
+      let releaseQueue;
+      const queueGate = new Promise(resolve => { releaseQueue = resolve; });
+      const position = fromBeginning ? 0 : 12.3;
+      try {
+        const startup = await startupContext.newPage();
+        await startup.addInitScript(() => {
+          window.startupLoads = 0;
+          document.addEventListener("loadedmetadata", event => {
+            if (event.target.id === "video") window.startupLoads++;
+          }, true);
+        });
+        await startup.route("**/graphql", async route => {
+          const query = route.request().postDataJSON().query;
+          if (!query.includes("query TVQueue") && !query.includes("query TVScene")) return route.continue();
+          const response = await route.fetch();
+          const body = await response.json();
+          if (body.data?.findScene?.id === id) body.data.findScene.resume_time = 12.3;
+          if (body.data?.configuration) (body.data.configuration.ui ??= {}).alwaysStartFromBeginning = fromBeginning;
+          if (body.data?.findScenes) {
+            body.data.findScenes.scenes = [{ id }, { id: matroska }];
+            await queueGate;
+            if (fromBeginning) return route.fulfill({ status: 503, body: "Queue unavailable" });
+          }
+          await route.fulfill({ response, json: body });
+        });
+        await startup.goto(options.baseURL + "/plugin/stash-tv/assets/index.html?autoplay=false&scene=" + id);
+        await startup.waitForFunction(expected => {
+          const video = document.getElementById("video");
+          return document.getElementById("player").dataset.videoReady === "true" &&
+            video.readyState >= 2 && video.paused && Math.abs(video.currentTime - expected) < 0.15;
+        }, position, { timeout: 5000 }).catch(async error => {
+          const state = await startup.evaluate(() => {
+            const player = document.getElementById("player");
+            const video = document.getElementById("video");
+            return { ready: player.dataset.videoReady, phase: player.dataset.phase,
+              time: video.currentTime, paused: video.paused, source: video.currentSrc,
+              status: document.getElementById("status").textContent };
+          });
+          throw new Error("Explicit scene did not decode at " + position + " before queue release: " + error.message + " " + JSON.stringify(state));
+        });
+        const disabled = await startup.evaluate(() => ["next", "previous", "random", "layout-two", "delete"]
+          .every(name => document.getElementById(name).disabled));
+        check(disabled, "Queue controls became active before the library order arrived");
+        releaseQueue();
+        if (fromBeginning) {
+          await startup.waitForFunction(() => document.getElementById("notice").textContent.startsWith("Queue could not load"));
+          check(await startup.evaluate(() => window.startupLoads === 1 && document.getElementById("next").disabled &&
+            document.getElementById("player").dataset.videoReady === "true"), "Queue failure interrupted the current video");
+          results.push({ name: "start-from-beginning settings apply before the queue and queue failure preserves playback", passed: true });
+        } else {
+          await startup.waitForFunction(() => !document.getElementById("next").disabled);
+          check(await startup.evaluate(expected => window.startupLoads === 1 &&
+            Math.abs(document.getElementById("video").currentTime - expected) < 0.15, position), "Queue hydration restarted the current video");
+          await startup.locator("#more").click();
+          await startup.locator("#next").click();
+          await startup.waitForFunction(expected => new URL(location.href).searchParams.get("scene") === expected &&
+            document.getElementById("player").dataset.videoReady === "true", matroska);
+          results.push({ name: "explicit scene decodes the saved frame before the library order without restarting at hydration", passed: true });
+        }
+      } finally {
+        releaseQueue();
+        await startupContext.close();
+      }
+    }
     await seek(8);
     await page.request.get(options.baseURL + "/_test/delay/" + id);
     const began = Date.now();
