@@ -4,6 +4,7 @@ const ITEM_LIMIT = 64 * 1024 * 1024;
 const INDEX_LIMIT = 8 * 1024 * 1024;
 const PAGE = 1024 * 1024;
 const STARTUP_SECONDS = 6;
+const STARTUP_BYTES = 24 * 1024 * 1024;
 const RANGE_LOOKBEHIND = 128 * 1024;
 let active = null;
 
@@ -73,7 +74,11 @@ async function prepare(input, signal) {
   const videoInfo = info.videoTracks[0];
   const track = file.getTrackById(videoInfo.id);
   const shift = trackShift(track, info.timescale);
-  const target = Math.max(0, Math.min(input.seconds, info.duration / info.timescale - 0.05));
+  const duration = info.duration / info.timescale;
+  const target = Math.max(0, Math.min(input.seconds, duration - 0.05));
+  // Limit how long a high-bitrate neighbour spends competing for bandwidth.
+  // Keep the preceding keyframe and aim for two to six seconds after the checkpoint.
+  const startupSeconds = Math.max(2, Math.min(STARTUP_SECONDS, STARTUP_BYTES * duration / total));
   let first = -1;
   for (let i = 0; i < track.samples.length; i++) {
     const sample = track.samples[i];
@@ -90,7 +95,7 @@ async function prepare(input, signal) {
       const sample = samples[i];
       const seconds = sample.cts / sample.timescale - delay;
       if (item.type !== "video" && seconds + sample.duration / sample.timescale < target) continue;
-      if (seconds > target + STARTUP_SECONDS) break;
+      if (seconds > target + startupSeconds) break;
       start = Math.min(start, sample.offset);
       end = Math.max(end, sample.offset + sample.size - 1);
     }
