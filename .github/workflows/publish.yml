@@ -26,7 +26,7 @@ jobs:
           path: dist
   integration:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: ${{ matrix.browser == 'webkit' && 25 || 15 }}
     strategy:
       fail-fast: false
       matrix:
